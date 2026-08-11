@@ -50,6 +50,7 @@ pub use rmcp_client::ElicitationResponse;
 pub use rmcp_client::ListToolsWithConnectorIdResult;
 pub use rmcp_client::RmcpClient;
 pub use rmcp_client::SendElicitation;
+pub use rmcp_client::ToolListChangeSubscription;
 pub use rmcp_client::ToolWithConnectorId;
 pub use startup_error::is_authentication_required_error;
 pub use stdio_server_launcher::ExecutorStdioServerLauncher;

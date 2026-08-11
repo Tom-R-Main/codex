@@ -262,6 +262,11 @@ impl McpConnectionSet {
             )
         };
         let tool_plugin_provenance = Arc::new(tool_plugin_provenance);
+        // Reused connections keep their subscription tasks, so the replacement
+        // manager must share the same revision counter they advance.
+        let tool_catalog_revision = previous
+            .map(|previous| Arc::clone(&previous.tool_catalog_revision))
+            .unwrap_or_else(|| Arc::new(RwLock::new(0)));
         let startup_submit_id = submit_id;
         let static_chatgpt_auth_provider = auth
             .filter(|auth| auth.uses_codex_backend())
@@ -491,6 +496,7 @@ impl McpConnectionSet {
                 client_mcp_extensions.clone(),
                 protocol_mode,
                 catalog_item_limit,
+                Arc::clone(&tool_catalog_revision),
             );
             let defer_startup = allow_deferred_startup
                 && !configured_config.required
@@ -643,7 +649,7 @@ impl McpConnectionSet {
             protocol_mode,
             required_servers,
             optional_startup_deadline: OnceLock::new(),
-            tool_catalog_revision: Arc::new(RwLock::new(0)),
+            tool_catalog_revision,
             codex_apps_tools_override: RwLock::new(None),
             codex_apps_refresh_lock: Mutex::new(()),
             tool_plugin_provenance,

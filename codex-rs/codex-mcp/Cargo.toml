@@ -43,6 +43,7 @@ tracing = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+axum = { workspace = true }
 codex-exec-server-test-support = { workspace = true }
 codex-plugin = { workspace = true }
 pretty_assertions = { workspace = true }

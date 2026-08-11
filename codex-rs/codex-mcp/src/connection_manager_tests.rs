@@ -69,8 +69,14 @@ use rmcp::model::PaginatedRequestParams;
 use rmcp::model::ProtocolVersion;
 use rmcp::model::ServerCapabilities;
 use rmcp::model::ServerInfo;
+use rmcp::model::SubscriptionFilter;
 use rmcp::model::Tool;
 use rmcp::service::RequestContext;
+use rmcp::service::SubscriptionContext;
+use rmcp::transport::streamable_http_server::StreamableHttpServerConfig;
+use rmcp::transport::streamable_http_server::StreamableHttpService;
+use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io;
@@ -335,6 +341,93 @@ impl InProcessTransportFactory for MutableToolsTransportFactory {
     }
 }
 
+#[derive(Clone)]
+struct SubscriptionToolsServer {
+    tools: Arc<tokio::sync::RwLock<Vec<Tool>>>,
+    subscription_ready: Arc<AtomicBool>,
+    subscription_started: Arc<Notify>,
+    emit_list_changed: Arc<Notify>,
+}
+
+impl ServerHandler for SubscriptionToolsServer {
+    fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
+        Cow::Borrowed(&[ProtocolVersion::V_2026_07_28, ProtocolVersion::V_2025_06_18])
+    }
+
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_tool_list_changed()
+                .build(),
+        )
+    }
+
+    fn accepted_subscription_filter(
+        &self,
+        requested: &SubscriptionFilter,
+    ) -> Option<SubscriptionFilter> {
+        Some(requested.supported_by(&self.get_info().capabilities))
+    }
+
+    async fn listen(&self, context: SubscriptionContext) -> Result<(), rmcp::ErrorData> {
+        self.subscription_ready.store(true, Ordering::Release);
+        self.subscription_started.notify_one();
+        self.emit_list_changed.notified().await;
+        context
+            .sink()
+            .notify_tool_list_changed()
+            .await
+            .expect("send tool-list notification");
+        context.cancelled().await;
+        Ok(())
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        if !self.subscription_ready.load(Ordering::Acquire) {
+            self.subscription_started.notified().await;
+        }
+        Ok(ListToolsResult::with_all_items(
+            self.tools.read().await.clone(),
+        ))
+    }
+}
+
+async fn spawn_subscription_tools_server(
+    tools: Arc<tokio::sync::RwLock<Vec<Tool>>>,
+) -> (String, Arc<Notify>, tokio::task::JoinHandle<()>) {
+    let subscription_ready = Arc::new(AtomicBool::new(false));
+    let subscription_started = Arc::new(Notify::new());
+    let emit_list_changed = Arc::new(Notify::new());
+    let handler = SubscriptionToolsServer {
+        tools,
+        subscription_ready,
+        subscription_started,
+        emit_list_changed: Arc::clone(&emit_list_changed),
+    };
+    let service: StreamableHttpService<SubscriptionToolsServer, LocalSessionManager> =
+        StreamableHttpService::new(
+            move || Ok(handler.clone()),
+            Default::default(),
+            StreamableHttpServerConfig::default()
+                .with_legacy_session_mode(true)
+                .with_json_response(true),
+        );
+    let router = axum::Router::new().nest_service("/mcp", service);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("listener address");
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    (format!("http://{address}/mcp"), emit_list_changed, server)
+}
+
 struct DisconnectingToolsTransportFactory {
     server: MutableToolsServer,
     disconnect: CancellationToken,
@@ -416,7 +509,7 @@ async fn create_test_managed_client(tools: Vec<ToolInfo>) -> ManagedClient {
                 .expect("create in-process RMCP client"),
         ),
         server_info: create_test_server_info("Ready"),
-        tools,
+        tools: Arc::new(std::sync::RwLock::new(tools)),
         tool_timeout: None,
         server_instructions: None,
         server_supports_sandbox_state_meta_capability: false,
@@ -509,7 +602,7 @@ async fn create_test_manager_with_ready_apps_client(
     let managed_client = ManagedClient {
         client,
         server_info: create_test_server_info("Codex Apps"),
-        tools: vec![tool],
+        tools: Arc::new(std::sync::RwLock::new(vec![tool])),
         tool_timeout: Some(Duration::from_secs(5)),
         server_instructions: None,
         server_supports_sandbox_state_meta_capability: false,
@@ -2682,7 +2775,7 @@ async fn cancelling_startup_does_not_disable_a_ready_client() {
         .await
         .expect("startup cancellation should not disable a ready client");
     assert_eq!(
-        model_tool_names(&managed.tools),
+        model_tool_names(&managed.listed_tools()),
         HashSet::from([ToolName::namespaced("ready", "search")])
     );
 }
@@ -3930,6 +4023,102 @@ async fn reconcile_reusable_server(
 }
 
 #[tokio::test]
+async fn modern_tool_list_subscription_refreshes_live_binding() -> anyhow::Result<()> {
+    let tools = Arc::new(tokio::sync::RwLock::new(vec![Tool::new(
+        "old_search",
+        "old search",
+        Arc::new(JsonObject::default()),
+    )]));
+    let (url, emit_list_changed, server) =
+        spawn_subscription_tools_server(Arc::clone(&tools)).await;
+    let mut server_config = reusable_server_config(&url);
+    let McpServerTransportConfig::StreamableHttp {
+        bearer_token_env_var,
+        ..
+    } = &mut server_config.transport
+    else {
+        unreachable!("reusable server config must use Streamable HTTP");
+    };
+    *bearer_token_env_var = None;
+    server_config.startup_timeout_sec = Some(Duration::from_secs(5));
+
+    let runtime_context = reusable_server_runtime_context();
+    let codex_home = tempdir().expect("tempdir");
+    let mut mcp_config = crate::mcp::tests::test_mcp_config(codex_home.path().to_path_buf());
+    mcp_config.protocol_mode = codex_rmcp_client::McpProtocolMode::V20260728;
+    let manager = Arc::new(
+        McpConnectionSet::new(
+            /*previous*/ None,
+            McpPublicationGate::already_published(),
+            McpRuntimeInput {
+                startup_policy: McpStartupPolicy::Eager,
+                config: Arc::new(mcp_config),
+                plugins_available: false,
+                ready_selected_capability_roots: Vec::new(),
+                mcp_servers: HashMap::from([(
+                    "docs".to_string(),
+                    EffectiveMcpServer::configured(server_config),
+                )]),
+                submit_id: "subscription-refresh".to_string(),
+                tx_event: None,
+                startup_cancellation_token: CancellationToken::new(),
+                runtime_context,
+                codex_apps_tools_cache: ConnectorRuntimeManager::default(),
+                tool_catalog_cache: McpToolCatalogCache::default(),
+                codex_apps_tools_cache_key: ConnectorRuntimeContextKey::personal(
+                    /*account_id*/ None, /*chatgpt_user_id*/ None,
+                ),
+                client_mcp_extensions: ClientMcpExtensions::default(),
+                auth: None,
+                codex_apps_auth_manager: None,
+                elicitation_reviewer: None,
+                elicitation_lifecycle: None,
+            },
+            ElicitationRequestRouter::default(),
+        )
+        .await,
+    );
+
+    let old_step = capture_binding(&manager).await;
+    assert_eq!(
+        old_step.tools()[0].canonical_tool_name(),
+        ToolName::namespaced("mcp__docs", "old_search")
+    );
+
+    *tools.write().await = vec![Tool::new(
+        "new_search",
+        "new search",
+        Arc::new(JsonObject::default()),
+    )];
+    emit_list_changed.notify_one();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if *manager.tool_catalog_revision.read().await > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("tool-list notification should advance the catalog revision");
+
+    let new_step = capture_binding(&manager).await;
+    assert_eq!(
+        new_step.tools()[0].canonical_tool_name(),
+        ToolName::namespaced("mcp__docs", "new_search")
+    );
+    assert_eq!(
+        old_step.tools()[0].canonical_tool_name(),
+        ToolName::namespaced("mcp__docs", "old_search")
+    );
+
+    manager.shutdown().await;
+    server.abort();
+    let _ = server.await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn reconciliation_reuses_connection_without_relisting_regular_tools() -> anyhow::Result<()> {
     let tools = Arc::new(tokio::sync::RwLock::new(vec![Tool::new(
         "old_search",
@@ -3979,7 +4168,7 @@ async fn reconciliation_reuses_connection_without_relisting_regular_tools() -> a
     let managed_client = ManagedClient {
         client,
         server_info: create_test_server_info("Mutable tools"),
-        tools: initial_tools,
+        tools: Arc::new(std::sync::RwLock::new(initial_tools)),
         tool_timeout: None,
         server_instructions: initialize.instructions,
         server_supports_sandbox_state_meta_capability: false,

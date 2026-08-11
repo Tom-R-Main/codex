@@ -45,14 +45,17 @@ use rmcp::model::ReadResourceResult;
 use rmcp::model::RequestId;
 use rmcp::model::RequestMetaObject;
 use rmcp::model::RequestParamsMeta;
+use rmcp::model::ServerNotification;
 use rmcp::model::ServerPeerInfo;
 use rmcp::model::ServerResult;
+use rmcp::model::SubscriptionFilter;
 use rmcp::model::Tool;
 use rmcp::service::ClientCacheConfig;
 use rmcp::service::ClientServiceExt;
 use rmcp::service::RequestHandle;
 use rmcp::service::RoleClient;
 use rmcp::service::RunningService;
+use rmcp::service::Subscription;
 use rmcp::transport::AuthorizationManager;
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::transport::auth::AuthClient;
@@ -351,6 +354,30 @@ pub struct ListToolsWithConnectorIdResult {
 pub struct CancellableEventStreamRequest {
     pub handle: RequestHandle<RoleClient>,
     pub notifications: crate::EventNotificationReceiver,
+}
+
+/// One active MCP 2026 tool-catalog subscription.
+pub struct ToolListChangeSubscription {
+    subscription: Subscription,
+}
+
+impl ToolListChangeSubscription {
+    /// Waits for the next tool-list change, or returns `None` when the stream ends.
+    pub async fn recv(&mut self) -> Result<Option<()>> {
+        match self.subscription.next().await? {
+            Some(ServerNotification::ToolListChangedNotification(_)) => Ok(Some(())),
+            Some(_) => Err(anyhow!(
+                "MCP tool-list subscription delivered an unexpected notification"
+            )),
+            None => Ok(None),
+        }
+    }
+
+    /// Cancels the long-lived subscription request.
+    pub async fn cancel(&mut self) -> Result<()> {
+        self.subscription.cancel().await?;
+        Ok(())
+    }
 }
 
 /// MCP client implemented on top of the official `rmcp` SDK.
@@ -904,6 +931,42 @@ impl RmcpClient {
             handle,
             notifications,
         })
+    }
+
+    /// Opens a modern `subscriptions/listen` stream when the server advertises
+    /// tool-list change notifications.
+    pub async fn subscribe_tool_list_changes(
+        &self,
+        timeout: Option<Duration>,
+    ) -> Result<Option<ToolListChangeSubscription>> {
+        if self.protocol_mode != McpProtocolMode::V20260728 {
+            return Ok(None);
+        }
+
+        let service = self.service().await?;
+        let supports_tool_list_changes = service.peer().peer_info().is_some_and(|info| {
+            info.capabilities
+                .tools
+                .as_ref()
+                .is_some_and(|tools| tools.list_changed == Some(true))
+        });
+        if !supports_tool_list_changes {
+            return Ok(None);
+        }
+
+        let filter = SubscriptionFilter::builder().tools_list_changed().build();
+        let mut subscription = self
+            .run_service_operation("subscriptions/listen", timeout, move |service| {
+                let filter = filter.clone();
+                async move { service.peer().listen(filter).await }.boxed()
+            })
+            .await?;
+        if subscription.acknowledged().tools_list_changed != Some(true) {
+            subscription.cancel().await?;
+            return Ok(None);
+        }
+
+        Ok(Some(ToolListChangeSubscription { subscription }))
     }
 
     async fn service(&self) -> Result<Arc<RunningService<RoleClient, ElicitationClientService>>> {

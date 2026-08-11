@@ -255,7 +255,7 @@ impl McpConnectionSet {
             } else {
                 None
             };
-            let server_tools = catalog_override.unwrap_or_else(|| client.tools.clone());
+            let server_tools = catalog_override.unwrap_or_else(|| client.listed_tools());
             let server_tools = filter_tools(server_tools, &view.tool_filter);
             let server_tools = if server_name == CODEX_APPS_MCP_SERVER_NAME {
                 prepare_codex_apps_tools_for_model(server_tools, &self.tool_plugin_provenance)

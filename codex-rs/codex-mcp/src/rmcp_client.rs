@@ -13,6 +13,7 @@ use std::env;
 use std::ffi::OsString;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
+use std::sync::RwLock as StdRwLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -60,6 +61,7 @@ use codex_rmcp_client::McpProtocolMode;
 use codex_rmcp_client::RmcpClient;
 use codex_rmcp_client::StdioServerLauncher;
 use codex_rmcp_client::StreamableHttpRedirectMode;
+use codex_rmcp_client::ToolListChangeSubscription;
 use codex_rmcp_client::ToolWithConnectorId;
 use codex_rmcp_client::is_authentication_required_error;
 use futures::future::BoxFuture;
@@ -71,6 +73,7 @@ use rmcp::model::Implementation;
 use rmcp::model::InitializeRequestParams;
 use rmcp::model::ProtocolVersion;
 use rmcp::model::Tool as RmcpTool;
+use tokio::sync::RwLock;
 use tokio::time::Instant as TokioInstant;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
@@ -93,6 +96,8 @@ pub(crate) const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub(crate) const CODEX_APPS_RECONNECT_INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 const CODEX_APPS_RECONNECT_MAX_BACKOFF: Duration = Duration::from_secs(30);
+const TOOL_LIST_SUBSCRIPTION_RETRY_DELAY: Duration = Duration::from_secs(1);
+const TOOL_LIST_SUBSCRIPTION_CANCEL_TIMEOUT: Duration = Duration::from_secs(5);
 
 const UNTRUSTED_CONNECTOR_META_KEYS: &[&str] = &[
     "connector_id",
@@ -106,7 +111,7 @@ const UNTRUSTED_CONNECTOR_META_KEYS: &[&str] = &[
 pub(crate) struct ManagedClient {
     pub(crate) client: Arc<RmcpClient>,
     pub(crate) server_info: McpServerInfo,
-    pub(crate) tools: Vec<ToolInfo>,
+    pub(crate) tools: Arc<StdRwLock<Vec<ToolInfo>>>,
     pub(crate) tool_timeout: Option<Duration>,
     pub(crate) server_instructions: Option<String>,
     pub(crate) server_supports_sandbox_state_meta_capability: bool,
@@ -137,7 +142,10 @@ impl ManagedClient {
             );
         }
 
-        self.tools.clone()
+        self.tools
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -285,6 +293,7 @@ struct ManagedClientStartup {
     client_mcp_extensions: ClientMcpExtensions,
     protocol_mode: McpProtocolMode,
     catalog_item_limit: usize,
+    tool_catalog_revision: Arc<RwLock<u64>>,
     cancel_token: CancellationToken,
     startup_complete: Arc<AtomicBool>,
 }
@@ -307,6 +316,7 @@ impl ManagedClientStartup {
             client_mcp_extensions,
             protocol_mode,
             catalog_item_limit,
+            tool_catalog_revision,
             cancel_token,
             startup_complete,
         } = self.clone();
@@ -315,6 +325,7 @@ impl ManagedClientStartup {
             .config()
             .startup_timeout_sec
             .unwrap_or(DEFAULT_STARTUP_TIMEOUT);
+        let cancel_token_for_task = cancel_token.clone();
         let cancel_token_for_fut = cancel_token;
         async move {
             let tool_catalog_fetch_ticket = tool_catalog_cache_context
@@ -362,6 +373,8 @@ impl ManagedClientStartup {
                         client_elicitation_capability,
                         client_mcp_extensions,
                         catalog_item_limit,
+                        tool_catalog_revision,
+                        cancel_token: cancel_token_for_task,
                     },
                 )
                 .await
@@ -426,6 +439,7 @@ impl AsyncManagedClient {
         client_mcp_extensions: ClientMcpExtensions,
         protocol_mode: McpProtocolMode,
         catalog_item_limit: usize,
+        tool_catalog_revision: Arc<RwLock<u64>>,
     ) -> Self {
         let is_codex_apps_mcp_server = server_name == CODEX_APPS_MCP_SERVER_NAME;
         let reconnect_server_name = server_name.clone();
@@ -454,6 +468,7 @@ impl AsyncManagedClient {
             client_mcp_extensions,
             protocol_mode,
             catalog_item_limit,
+            tool_catalog_revision,
             cancel_token: cancel_token.clone(),
             startup_complete: Arc::clone(&startup_complete),
         });
@@ -874,6 +889,8 @@ async fn start_server_task(
         client_elicitation_capability,
         client_mcp_extensions,
         catalog_item_limit,
+        tool_catalog_revision,
+        cancel_token,
     } = params;
     let params =
         mcp_initialize_request_params(client_elicitation_capability, client_mcp_extensions);
@@ -883,6 +900,21 @@ async fn start_server_task(
         .initialize(params, startup_timeout, send_elicitation)
         .await
         .map_err(StartupOutcomeError::from)?;
+
+    // Establish the subscription before the first catalog snapshot. Any change
+    // that races with tools/list is then queued by RMCP and forces a refresh.
+    let initial_tool_list_subscription =
+        match client.subscribe_tool_list_changes(startup_timeout).await {
+            Ok(subscription) => subscription,
+            Err(error) => {
+                warn!(
+                    server_name,
+                    error = %error,
+                    "failed to establish MCP tool-list subscription; retrying in background"
+                );
+                None
+            }
+        };
 
     let server_disables_tool_catalog_cache = initialize_result
         .capabilities
@@ -943,17 +975,176 @@ async fn start_server_task(
             &[("cache", "miss")],
         );
     }
+    let tools = Arc::new(StdRwLock::new(client_tools));
     let managed = ManagedClient {
         client: Arc::clone(&client),
-        server_info,
-        tools: client_tools,
+        server_info: server_info.clone(),
+        tools: Arc::clone(&tools),
         tool_timeout: None,
-        server_instructions: initialize_result.instructions,
+        server_instructions: initialize_result.instructions.clone(),
         server_supports_sandbox_state_meta_capability,
-        codex_apps_tools_cache_context,
+        codex_apps_tools_cache_context: codex_apps_tools_cache_context.clone(),
     };
 
+    if client.protocol_mode() == McpProtocolMode::V20260728 {
+        tokio::spawn(run_tool_list_subscription(ToolListSubscriptionTask {
+            server_name,
+            is_codex_apps_mcp_server,
+            client,
+            subscription: initial_tool_list_subscription,
+            tools,
+            server_info,
+            server_instructions: initialize_result.instructions,
+            codex_apps_tools_cache_context,
+            tool_catalog_cache_context,
+            tool_catalog_revision,
+            catalog_item_limit,
+            timeout: startup_timeout,
+            cancel_token,
+        }));
+    }
+
     Ok(managed)
+}
+
+struct ToolListSubscriptionTask {
+    server_name: String,
+    is_codex_apps_mcp_server: bool,
+    client: Arc<RmcpClient>,
+    subscription: Option<ToolListChangeSubscription>,
+    tools: Arc<StdRwLock<Vec<ToolInfo>>>,
+    server_info: McpServerInfo,
+    server_instructions: Option<String>,
+    codex_apps_tools_cache_context: Option<ConnectorRuntimeContext<ToolInfo>>,
+    tool_catalog_cache_context: Option<McpToolCatalogCacheContext>,
+    tool_catalog_revision: Arc<RwLock<u64>>,
+    catalog_item_limit: usize,
+    timeout: Option<Duration>,
+    cancel_token: CancellationToken,
+}
+
+async fn run_tool_list_subscription(mut task: ToolListSubscriptionTask) {
+    loop {
+        if task.subscription.is_none() {
+            let subscription = tokio::select! {
+                () = task.cancel_token.cancelled() => return,
+                result = task.client.subscribe_tool_list_changes(task.timeout) => result,
+            };
+            match subscription {
+                Ok(Some(subscription)) => task.subscription = Some(subscription),
+                Ok(None) => return,
+                Err(error) => {
+                    warn!(
+                        server_name = task.server_name,
+                        error = %error,
+                        "failed to re-establish MCP tool-list subscription"
+                    );
+                    tokio::select! {
+                        () = task.cancel_token.cancelled() => return,
+                        () = tokio::time::sleep(TOOL_LIST_SUBSCRIPTION_RETRY_DELAY) => {}
+                    }
+                    continue;
+                }
+            }
+        }
+
+        let Some(subscription) = task.subscription.as_mut() else {
+            continue;
+        };
+        let notification = tokio::select! {
+            () = task.cancel_token.cancelled() => {
+                let _ = tokio::time::timeout(
+                    TOOL_LIST_SUBSCRIPTION_CANCEL_TIMEOUT,
+                    subscription.cancel(),
+                )
+                .await;
+                return;
+            }
+            result = subscription.recv() => result,
+        };
+
+        match notification {
+            Ok(Some(())) => {
+                if let Err(error) = refresh_tools_from_subscription(&task).await {
+                    warn!(
+                        server_name = task.server_name,
+                        error = %error,
+                        "failed to refresh MCP tools after list-changed notification"
+                    );
+                }
+            }
+            Ok(None) => {
+                warn!(
+                    server_name = task.server_name,
+                    "MCP tool-list subscription ended; reconnecting"
+                );
+                task.subscription = None;
+                tokio::select! {
+                    () = task.cancel_token.cancelled() => return,
+                    () = tokio::time::sleep(TOOL_LIST_SUBSCRIPTION_RETRY_DELAY) => {}
+                }
+            }
+            Err(error) => {
+                warn!(
+                    server_name = task.server_name,
+                    error = %error,
+                    "MCP tool-list subscription failed; reconnecting"
+                );
+                task.subscription = None;
+                tokio::select! {
+                    () = task.cancel_token.cancelled() => return,
+                    () = tokio::time::sleep(TOOL_LIST_SUBSCRIPTION_RETRY_DELAY) => {}
+                }
+            }
+        }
+    }
+}
+
+async fn refresh_tools_from_subscription(task: &ToolListSubscriptionTask) -> Result<()> {
+    let codex_apps_fetch_ticket = task
+        .codex_apps_tools_cache_context
+        .as_ref()
+        .map(|cache_context| cache_context.begin_fetch(ConnectorRuntimeFetchSource::HardRefresh));
+    let tool_catalog_fetch_ticket = task
+        .tool_catalog_cache_context
+        .as_ref()
+        .map(McpToolCatalogCacheContext::begin_fetch);
+    let client_tools = list_tools_for_client_uncached(
+        &task.server_name,
+        task.is_codex_apps_mcp_server,
+        /*codex_apps_refresh_trigger*/ "subscription",
+        &task.client,
+        task.timeout,
+        task.catalog_item_limit,
+        task.server_instructions.as_deref(),
+    )
+    .await?;
+
+    let mut revision = task.tool_catalog_revision.write().await;
+    let shared_tools = match (
+        task.codex_apps_tools_cache_context.as_ref(),
+        codex_apps_fetch_ticket,
+    ) {
+        (Some(cache_context), Some(fetch_ticket)) => cache_context.publish_if_newest_accepted(
+            fetch_ticket,
+            &task.server_info,
+            client_tools.clone(),
+        ),
+        (None, None) => client_tools.clone(),
+        _ => unreachable!("Codex Apps fetch ticket requires cache context"),
+    };
+    if let (Some(cache_context), Some(fetch_ticket)) = (
+        task.tool_catalog_cache_context.as_ref(),
+        tool_catalog_fetch_ticket,
+    ) {
+        cache_context.publish_if_newest(fetch_ticket, &shared_tools);
+    }
+    *task
+        .tools
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = client_tools;
+    *revision += 1;
+    Ok(())
 }
 
 fn mcp_initialize_request_params(
@@ -1012,6 +1203,8 @@ struct StartServerTaskParams {
     client_elicitation_capability: ElicitationCapability,
     client_mcp_extensions: ClientMcpExtensions,
     catalog_item_limit: usize,
+    tool_catalog_revision: Arc<RwLock<u64>>,
+    cancel_token: CancellationToken,
 }
 
 #[allow(clippy::too_many_arguments)]
