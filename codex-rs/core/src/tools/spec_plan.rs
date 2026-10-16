@@ -357,6 +357,17 @@ pub(crate) fn finalize_tool_router(
 ) -> CodexResult<ToolRouter> {
     hosted_specs.retain(|spec| !crate::worker_policy::restricted() && registry.tool_policy.allows(&ToolName::plain(spec.name())));
     apply_direct_model_only_namespace_overrides(turn_context, &mut registry);
+    if crate::worker_policy::restricted() {
+        // This ceiling forbids tool_search and code-mode helpers. Its sole
+        // permitted MCP executor must therefore remain directly callable,
+        // including when ordinary MCP policy selected deferred exposure.
+        for tool in registry.entries_mut() {
+            if crate::worker_policy::allows_tool(&tool.runtime.tool_name().with_default_namespace(),
+                tool.runtime.mcp_server_name()) {
+                tool.exposure = ToolExposure::DirectModelOnly;
+            }
+        }
+    }
     let tool_mode = effective_tool_mode(turn_context, model_info);
     let code_mode_enabled = matches!(tool_mode, ToolMode::CodeMode | ToolMode::CodeModeOnly);
     if code_mode_enabled {

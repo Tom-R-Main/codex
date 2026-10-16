@@ -210,3 +210,42 @@ async fn provider_requirement_load_errors_reject_input() -> Result<()> {
     }
     Ok(())
 }
+
+
+#[tokio::test]
+async fn sealed_turn_provider_checks_retained_native_policy_without_ambient_discovery() -> Result<()> {
+    let root = tempdir()?;
+    let (mut manager, native) = crate::worker_launch::tests::sealed_manager_fixture(root.path()).await;
+    let requirements = root.path().join("requirements.toml");
+    manager.loader_overrides = LoaderOverrides::without_managed_config_for_tests();
+    manager.loader_overrides.system_requirements_path = Some(requirements.clone());
+    let cloud_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = Arc::clone(&cloud_calls);
+    manager.cloud_config_bundle = Arc::new(RwLock::new(CloudConfigBundleLoader::new(async move {
+        observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(CloudConfigBundleLoadError::new(CloudConfigBundleLoadErrorCode::RequestFailed,
+            /*status_code*/ None, "ambient policy must not be discovered for sealed workers"))
+    })));
+    for ambient in ["model_provider = 'different-provider'", "invalid ambient requirements = ["] {
+        std::fs::write(&requirements, ambient)?;
+        manager.check_thread_model_provider(&native).await?;
+        let retained = manager.load_retained_session_config(&native.config_layer_stack, &native.cwd).await?;
+        manager.check_thread_model_provider(&retained).await?;
+        assert_eq!(retained, native);
+    }
+    assert_eq!(cloud_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let mut changed = native.clone();
+    changed.model_provider_id = "different-provider".to_string();
+    assert!(manager.check_thread_model_provider(&changed).await.is_err());
+    let mut changed = native.clone();
+    changed.model_provider.base_url = Some("http://127.0.0.1:9192/other".to_string());
+    assert!(manager.check_thread_model_provider(&changed).await.is_err());
+    let mut changed = native.clone();
+    changed.model = Some("different-model".to_string());
+    assert!(manager.check_thread_model_provider(&changed).await.is_err());
+    assert_eq!(cloud_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    // The ordinary path still honors the same malformed ambient requirements.
+    manager.sealed_worker = None;
+    assert!(manager.check_thread_model_provider(&native).await.is_err());
+    Ok(())
+}

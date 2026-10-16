@@ -280,6 +280,9 @@ impl ConfigManager {
         &self,
         current: &Config,
     ) -> std::io::Result<()> {
+        if let Some(source) = &self.sealed_worker {
+            return source.validate_config(current);
+        }
         let policy_load = self.refresh_application_network_policy().await?;
         // Existing threads retain their session route; only managed
         // requirements can invalidate it.

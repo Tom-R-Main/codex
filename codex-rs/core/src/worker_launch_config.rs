@@ -81,6 +81,17 @@ impl WorkerRuntimePaths {
 }
 
 impl WorkerLaunchMaterialization {
+    /// Compare behavioral state with the actual retained native configuration,
+    /// without discovering ambient local/cloud requirements or credentials.
+    pub fn validate_config(&self, current: &Config) -> io::Result<()> {
+        let fail = worker_materialization_error;
+        if effective_config_sha256(current).map_err(|_| fail())?
+            != effective_config_sha256(&self.config).map_err(|_| fail())? {
+            return Err(fail());
+        }
+        Ok(())
+    }
+
     /// Thread/resume loads clone the same native loaded state, without reading
     /// ambient layers or re-installing authorization into serializable layers.
     pub fn load_config(&self, overrides: &ConfigOverrides, fallback_cwd: Option<&Path>) -> io::Result<Config> {

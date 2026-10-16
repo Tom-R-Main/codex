@@ -285,6 +285,7 @@ async fn isolated_dispatch_child() {
     }
     assert_eq!(registry.tool_names_for_test(), vec![allowed.clone()]);
     let (session, turn) = crate::session::tests::make_session_and_context().await;
+    restricted_executor_is_directly_visible_to_search_capable_models(&turn);
     let session = std::sync::Arc::new(session);
     let turn = std::sync::Arc::new(turn);
     let session_id = session.thread_id.to_string();
@@ -438,4 +439,40 @@ fn model_argument_identity_does_not_replace_transport_identity() {
     assert_eq!(meta["siftWorkerExecutor"]["launchId"], "controller-launch-nonce");
     assert_eq!(meta["siftWorkerExecutor"]["threadId"], "actual-thread");
     assert_eq!(arguments.unwrap()["siftWorkerExecutor"]["threadId"], "model-spoof");
+}
+
+
+fn restricted_executor_is_directly_visible_to_search_capable_models(turn: &crate::session::turn_context::TurnContext) {
+    use crate::tools::handlers::{McpHandler, ToolSearchHandlerCache};
+    use crate::tools::registry::{ToolExposure, ToolRegistry};
+    use crate::tools::router::ToolRouter;
+    use codex_tools::{ResponsesApiNamespaceTool, ToolSpec};
+    let mut model = turn.model_info().as_ref().clone();
+    model.supports_search_tool = true;
+    assert!(crate::tools::spec_plan::search_tool_enabled(turn, &model));
+    let allowed = ToolName::namespaced("mcp__sift_worker", "execute");
+    for exposure in [ToolExposure::Deferred, ToolExposure::DeferredModelOnly] {
+        let mut registry = ToolRegistry::with_tool_policy(Default::default());
+        let tool = codex_mcp::ToolInfo {
+            server_name: "sift-worker".to_string(), supports_parallel_tool_calls: false, server_origin: None,
+            callable_name: "execute".to_string(), callable_namespace: "mcp__sift_worker".to_string(),
+            namespace_description: Some("Protected worker executor".to_string()),
+            tool: rmcp::model::Tool::new("execute".to_string(), "Protected executor fixture".to_string(),
+                std::sync::Arc::new(rmcp::model::object(json!({"type":"object","properties":{}})))),
+            openai_file_input_optional_fields: Default::default(), connector_id: None, connector_name: None,
+            plugin_display_names: Vec::new(),
+        };
+        registry.register_external_with_exposure(std::sync::Arc::new(McpHandler::new(tool).unwrap()), exposure);
+        registry.add_with_exposure(CountingRuntime { name: ToolName::plain("tool_search"), server: None,
+            calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)) }, ToolExposure::Direct);
+        let router = ToolRouter::from_registry(turn, &model, registry, Vec::new(), &ToolSearchHandlerCache::default());
+        assert_eq!(router.registered_tool_names_for_test(), vec![allowed.clone()]);
+        assert_eq!(router.tool_exposure_for_test(&allowed), Some(ToolExposure::DirectModelOnly));
+        let specs = router.model_visible_specs();
+        let [ToolSpec::Namespace(namespace)] = specs.as_ref() else { panic!("one callable executor namespace required"); };
+        assert_eq!(namespace.name, "mcp__sift_worker");
+        let [ResponsesApiNamespaceTool::Function(function)] = namespace.tools.as_slice() else { panic!("one callable executor required"); };
+        assert_eq!(function.name, "execute");
+        assert!(!router.registered_tool_names_for_test().contains(&ToolName::plain("tool_search")));
+    }
 }
