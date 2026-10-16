@@ -2894,6 +2894,17 @@
             "null"
           ]
         },
+        "siftCommandScope": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SiftCommandScope"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Provider-specific v1 execution identity. Never reconstructed from `command` or command actions. Absent for pre-rewrite shell commands, network and terminal-input approvals, and when native execve identity is unavailable."
+        },
         "startedAtMs": {
           "description": "Unix timestamp (in milliseconds) when this approval request started.",
           "format": "int64",
@@ -6531,6 +6542,36 @@
         }
       ],
       "title": "ServerRequest"
+    },
+    "SiftCommandScope": {
+      "additionalProperties": false,
+      "description": "Exact native execution vector supplied by the provider, before command presentation. Consumers must bind this to the thread incarnation and environment, and persist only digests.",
+      "properties": {
+        "argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "program": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "argv",
+        "cwd",
+        "program",
+        "version"
+      ],
+      "type": "object"
     },
     "ToolRequestUserInputAnswer": {
       "description": "EXPERIMENTAL. Captures a user's answer to a request_user_input question.",

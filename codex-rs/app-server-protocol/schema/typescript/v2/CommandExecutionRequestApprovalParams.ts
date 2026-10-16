@@ -7,6 +7,7 @@ import type { CommandExecutionApprovalKind } from "./CommandExecutionApprovalKin
 import type { ExecPolicyAmendment } from "./ExecPolicyAmendment";
 import type { NetworkApprovalContext } from "./NetworkApprovalContext";
 import type { NetworkPolicyAmendment } from "./NetworkPolicyAmendment";
+import type { SiftCommandScope } from "./SiftCommandScope";
 
 export type CommandExecutionRequestApprovalParams = {/**
  * Kind of action under review. Defaults to `command` for older servers.
@@ -40,6 +41,11 @@ command?: string | null, /**
  * The command's working directory.
  */
 cwd?: LegacyAppPathString | null, /**
+ * Provider-specific v1 execution identity. Never reconstructed from `command` or command actions.
+ * Absent for pre-rewrite shell commands, network and terminal-input approvals,
+ * and when native execve identity is unavailable.
+ */
+siftCommandScope?: SiftCommandScope | null, /**
  * Best-effort parsed command actions for friendly display.
  */
 commandActions?: Array<CommandAction> | null, /**
