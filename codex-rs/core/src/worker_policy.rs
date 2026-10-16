@@ -10,12 +10,11 @@ use serde::Serialize;
 use sha2::Digest;
 use sha2::Sha256;
 use std::collections::BTreeMap;
-use std::sync::Mutex;
 use std::sync::OnceLock;
 
 const UPSTREAM_REVISION: &str = "36650394c5b38c2990ccf2a3457165ca3e9d9726";
 static LAUNCH: OnceLock<Result<Option<WorkerPolicy>, String>> = OnceLock::new();
-static REGISTRIES: Mutex<BTreeMap<String, serde_json::Value>> = Mutex::new(BTreeMap::new());
+use crate::worker_registry::WorkerRegistryOwner;
 
 /// Only the trusted launcher supplies this value, before any thread or config loading.
 /// The worker workspace must not contain its launch environment, binary or controller.
@@ -284,9 +283,9 @@ pub(crate) fn prepared_call_allowed(call: &codex_mcp::PreparedMcpCall) -> bool {
     }
 }
 
-pub(crate) fn record_registry(thread: String, model: &str, config: &crate::config::Config, inventory: Vec<(ToolName, Option<String>)>) -> Result<(), String> {
+pub(crate) fn record_registry(thread: String, owner: &WorkerRegistryOwner, model: &str, config: &crate::config::Config, inventory: Vec<(ToolName, Option<String>)>) -> Result<(), String> {
     let Ok(Some(policy)) = launch() else { return Ok(()); };
-    invalidate_registry(&thread)?;
+    invalidate_registry(&thread, owner)?;
     policy.validate_config(config).map_err(|_| "worker effective configuration violates launch policy")?;
     validate_worker_model(model).map_err(|_| "worker effective model violates launch policy")?;
     if inventory.len() != 1 || inventory.iter().any(|(name, server)| !policy.allows(name, server.as_deref())) {
@@ -312,12 +311,7 @@ pub(crate) fn record_registry(thread: String, model: &str, config: &crate::confi
         "executableRegistry": inventory,
         "remaining": ["trusted-image-build-binding", "external-state-config-binding", "alternate-effect-qualification", "controller-handshake"]
     });
-    let mut registries = REGISTRIES.lock().map_err(|_| "worker registry state unavailable")?;
-    if !registries.contains_key(&thread) && registries.len() >= 64 {
-        return Err("worker attestation capacity exceeded".to_string());
-    }
-    registries.insert(thread, attestation);
-    Ok(())
+    crate::worker_registry::publish(thread, owner, attestation)
 }
 
 /// Content-bounded evidence from actual router construction, not model-visible schemas.
@@ -325,15 +319,14 @@ pub fn read_worker_policy(thread: &str, challenge: &str) -> serde_json::Value {
     if !valid_identity(challenge) || !valid_identity(thread) {
         return serde_json::json!({"version":1,"coverageComplete":false,"ready":false});
     }
-    let mut attestation = REGISTRIES.lock().ok().and_then(|registries| registries.get(thread).cloned())
+    let mut attestation = crate::worker_registry::read(thread)
         .unwrap_or_else(|| serde_json::json!({"version":1,"coverageComplete":false,"ready":false}));
     attestation["challenge"] = serde_json::json!(challenge);
     attestation
 }
 
-pub(crate) fn invalidate_registry(thread: &str) -> Result<(), String> {
-    REGISTRIES.lock().map_err(|_| "worker registry state unavailable")?.remove(thread);
-    Ok(())
+pub(crate) fn invalidate_registry(thread: &str, owner: &WorkerRegistryOwner) -> Result<(), String> {
+    crate::worker_registry::invalidate(thread, owner)
 }
 
 pub(crate) fn preflight_server() -> Result<String, String> {
@@ -357,6 +350,7 @@ fn valid_identity(value: &str) -> bool {
 /// before effects. This metadata alone is not a human decision or an execution grant.
 pub(crate) fn executor_request_meta(
     thread: &str,
+    owner: &WorkerRegistryOwner,
     turn: &str,
     call: &str,
     arguments: &Option<serde_json::Value>,
@@ -365,7 +359,7 @@ pub(crate) fn executor_request_meta(
     match launch() {
         Ok(None) => Ok(meta),
         Ok(Some(policy)) => {
-            if !REGISTRIES.lock().map_err(|_| "worker registry state unavailable")?.contains_key(thread) {
+            if !crate::worker_registry::contains(thread, owner)? {
                 return Err("worker registry handshake unavailable".to_string());
             }
             executor_meta(policy, thread, turn, call, arguments, meta).map(Some)

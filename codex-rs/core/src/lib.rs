@@ -77,6 +77,7 @@ mod agent_message_board;
 pub use agent_message_board::install_agent_message_board;
 mod attestation;
 mod worker_policy;
+mod worker_registry;
 mod worker_policy_config;
 mod worker_launch_config;
 pub use worker_launch_config::{WorkerLaunchMaterialization, WorkerRuntimePaths, WORKER_MATERIALIZATION_MAX_BYTES,

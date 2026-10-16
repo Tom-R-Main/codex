@@ -85,6 +85,7 @@ fn sample_command_approval_request(request_id: i64, approval_id: Option<&str>) -
             reason: None,
             network_approval_context: None,
             command: Some("echo hi".to_string()),
+            sift_command_scope: None,
             cwd: None,
             command_actions: None,
             additional_permissions: None,

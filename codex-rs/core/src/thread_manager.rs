@@ -1290,7 +1290,7 @@ impl ThreadManager {
     /// as `Arc<CodexThread>`, it is possible that other references to it exist elsewhere.
     /// Returns the thread if the thread was found and removed.
     pub async fn remove_thread(&self, thread_id: &ThreadId) -> Option<Arc<CodexThread>> {
-        self.state.threads.write().await.remove(thread_id)
+        self.state.remove_thread(thread_id).await
     }
 
     /// Removes a runtime for a client request, leaving internal workers with their owner.
@@ -1308,7 +1308,9 @@ impl ThreadManager {
                 "live internal threads can only be removed by their owner".to_owned(),
             ));
         }
-        Ok(threads.remove(thread_id))
+        let removed = threads.remove(thread_id);
+        if let Some(thread) = &removed { thread.session.worker_registry.retire(); }
+        Ok(removed)
     }
 
     /// Removes a thread only if `thread_id` still maps to `expected`.
@@ -1325,7 +1327,9 @@ impl ThreadManager {
             .get(thread_id)
             .is_some_and(|thread| Arc::ptr_eq(thread, expected))
         {
-            threads.remove(thread_id)
+            let removed = threads.remove(thread_id);
+            if let Some(thread) = &removed { thread.session.worker_registry.retire(); }
+            removed
         } else {
             None
         }
@@ -1352,22 +1356,29 @@ impl ThreadManager {
                     Ok(Err(_)) => ShutdownOutcome::SubmitFailed,
                     Err(_) => ShutdownOutcome::TimedOut,
                 };
-                (thread_id, outcome)
+                (thread_id, thread, outcome)
             })
             .collect::<FuturesUnordered<_>>();
         let mut report = ThreadShutdownReport::default();
 
-        while let Some((thread_id, outcome)) = shutdowns.next().await {
+        let mut completed_runtimes = Vec::new();
+        while let Some((thread_id, thread, outcome)) = shutdowns.next().await {
             match outcome {
-                ShutdownOutcome::Complete => report.completed.push(thread_id),
+                ShutdownOutcome::Complete => {
+                    thread.session.worker_registry.retire();
+                    completed_runtimes.push((thread_id, thread));
+                    report.completed.push(thread_id);
+                },
                 ShutdownOutcome::SubmitFailed => report.submit_failed.push(thread_id),
                 ShutdownOutcome::TimedOut => report.timed_out.push(thread_id),
             }
         }
 
         let mut tracked_threads = self.state.threads.write().await;
-        for thread_id in &report.completed {
-            tracked_threads.remove(thread_id);
+        for (thread_id, expected) in completed_runtimes {
+            if tracked_threads.get(&thread_id).is_some_and(|thread| Arc::ptr_eq(thread, &expected)) {
+                tracked_threads.remove(&thread_id);
+            }
         }
 
         report
@@ -1696,7 +1707,12 @@ impl ThreadManagerState {
 
     /// Remove a thread from the manager by ID, returning it when present.
     pub(crate) async fn remove_thread(&self, thread_id: &ThreadId) -> Option<Arc<CodexThread>> {
-        self.threads.write().await.remove(thread_id)
+        let mut threads = self.threads.write().await;
+        let removed = threads.remove(thread_id);
+        // Keep map -> registry ordering through retirement; a replacement must
+        // not publish while the removed runtime can still publish its registry.
+        if let Some(thread) = &removed { thread.session.worker_registry.retire(); }
+        removed
     }
 
     pub(crate) async fn effective_multi_agent_version_for_spawn(
@@ -2093,7 +2109,9 @@ impl ThreadManagerState {
                         thread,
                     });
                 }
-                threads.remove(&resumed.conversation_id);
+                if let Some(removed) = threads.remove(&resumed.conversation_id) {
+                    removed.session.worker_registry.retire();
+                }
             }
         }
         // Both resume entry points must restore identities before children can be loaded lazily.
@@ -2581,3 +2599,7 @@ fn append_interrupted_boundary(
 #[cfg(test)]
 #[path = "thread_manager_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "thread_manager_worker_registry_tests.rs"]
+mod worker_registry_tests;

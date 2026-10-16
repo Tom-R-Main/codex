@@ -478,6 +478,7 @@ fn app_server_exec_approval_request_splits_shell_wrapped_command() {
             approval_id: Some("approval-1".to_string()),
             environment_id: None,
             reason: None,
+            sift_command_scope: None,
             network_approval_context: None,
             command: Some(
                 shlex::try_join(["/bin/zsh", "-lc", script])

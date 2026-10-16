@@ -1883,7 +1883,7 @@ impl Session {
         if !crate::worker_policy::settings_update_allowed(&updates) {
             // Deny before applying settings, model resolution or state publication.
             // Poisoned registry reads/metadata already fail closed.
-            let _ = crate::worker_policy::invalidate_registry(&self.thread_id.to_string());
+            let _ = crate::worker_policy::invalidate_registry(&self.thread_id.to_string(), &self.worker_registry);
             return Err(crate::config::ConstraintError::InvalidValue {
                 field_name: "restricted_worker_configuration",
                 candidate: "thread settings override".to_string(),
@@ -1912,7 +1912,7 @@ impl Session {
                 // settings or starting their proxy/MCP refresh. A poisoned map
                 // already denies both readback and executor metadata, so its
                 // error cannot leave usable stale authority behind.
-                let _ = crate::worker_policy::invalidate_registry(&self.thread_id.to_string());
+                let _ = crate::worker_policy::invalidate_registry(&self.thread_id.to_string(), &self.worker_registry);
             }
 
             let previous_config = notify_config_contributors
@@ -3815,7 +3815,7 @@ impl Session {
         if crate::worker_policy::worker_is_restricted() {
             // A failed new snapshot must not re-challenge an older successful
             // router or authorize metadata against that stale registry.
-            crate::worker_policy::invalidate_registry(&self.thread_id.to_string())
+            crate::worker_policy::invalidate_registry(&self.thread_id.to_string(), &self.worker_registry)
                 .map_err(CodexErr::InvalidRequest)?;
         }
         // Reject context overrides before instruction reads, capability discovery

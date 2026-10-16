@@ -38,7 +38,7 @@ impl Session {
         if self.active_turn.lock().await.is_some() {
             return Err(CodexErr::InvalidRequest("worker preparation requires an idle thread".to_owned()));
         }
-        crate::worker_policy::invalidate_registry(&self.thread_id.to_string())
+        crate::worker_policy::invalidate_registry(&self.thread_id.to_string(), &self.worker_registry)
             .map_err(CodexErr::InvalidRequest)?;
         // Validate before context discovery as well as after its effective snapshot.
         let config = self.get_config().await;

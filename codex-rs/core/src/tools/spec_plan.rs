@@ -184,7 +184,7 @@ pub(crate) fn build_tool_router(
         hosted_specs,
         &session.services.tool_search_handler_cache,
     )?;
-    router.record_worker_registry(session.thread_id.to_string(), &model_info.slug, &turn_context.config)
+    router.record_worker_registry(session, &model_info.slug, &turn_context.config)
         .map_err(CodexErrorDetails::InvalidRequest)?;
     Ok(router)
 }

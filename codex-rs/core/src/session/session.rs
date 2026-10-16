@@ -57,6 +57,7 @@ type McpToolApprovalMetadataMap =
 /// A session has at most 1 running task at a time, and can be interrupted by user input.
 pub(crate) struct Session {
     pub(crate) thread_id: ThreadId,
+    pub(crate) worker_registry: crate::worker_registry::WorkerRegistryOwner,
     pub(crate) installation_id: String,
     pub(super) tx_event: Sender<Event>,
     pub(super) agent_status: watch::Sender<AgentStatus>,
@@ -1748,6 +1749,7 @@ impl Session {
             let (mcp_prewarm_tx, mcp_prewarm_rx) = async_channel::bounded(1);
             let sess = Arc::new(Session {
                 thread_id,
+                worker_registry: Default::default(),
                 installation_id,
                 tx_event: tx_event.clone(),
                 agent_status,

@@ -623,6 +623,7 @@ mod tests {
                 approval_id: approval_id.map(str::to_string),
                 environment_id: None,
                 reason: None,
+                sift_command_scope: None,
                 network_approval_context: None,
                 command: Some("echo hi".to_string()),
                 cwd: Some(test_path_buf("/tmp").abs().into()),

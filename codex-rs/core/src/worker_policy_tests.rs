@@ -236,9 +236,10 @@ async fn isolated_dispatch_child() {
     }
     assert!(worker_rpc_allowed("turn/start"));
     assert!(worker_rpc_allowed("workerPolicy/read"));
-    assert!(record_registry("registry-test".to_owned(), "worker-model", &config, vec![]).is_err());
+    let registry_owner = crate::worker_registry::WorkerRegistryOwner::default();
+    assert!(record_registry("registry-test".to_owned(), &registry_owner, "worker-model", &config, vec![]).is_err());
     let allowed_tool = ToolName::namespaced("mcp__sift_worker", "execute");
-    assert!(record_registry("registry-test".to_owned(), "worker-model", &config, vec![
+    assert!(record_registry("registry-test".to_owned(), &registry_owner, "worker-model", &config, vec![
         (allowed_tool, Some("sift-worker".to_owned())),
     ]).is_ok());
     let readback = read_worker_policy("registry-test", "fresh-challenge");
@@ -248,16 +249,16 @@ async fn isolated_dispatch_child() {
     assert_eq!(readback["configSha256"], crate::worker_policy_config::effective_config_sha256(&config).unwrap());
     assert_eq!(readback["configSchemaVersion"], crate::worker_policy_config::CONFIG_SCHEMA_VERSION);
     assert_eq!(read_worker_policy("registry-test", "")["ready"], false);
-    assert!(executor_request_meta("not-registered", "turn-1", "call-1", &None, None).is_err());
-    assert!(executor_request_meta("registry-test", "turn-1", "call-1", &None, None).is_ok());
+    assert!(executor_request_meta("not-registered", &registry_owner, "turn-1", "call-1", &None, None).is_err());
+    assert!(executor_request_meta("registry-test", &registry_owner, "turn-1", "call-1", &None, None).is_ok());
     let mut changed = config.clone();
     changed.permissions.allow_login_shell = !changed.permissions.allow_login_shell;
     assert!(validate_worker_config(&changed).is_err());
-    assert!(record_registry("registry-test".to_owned(), "worker-model", &changed, vec![
+    assert!(record_registry("registry-test".to_owned(), &registry_owner, "worker-model", &changed, vec![
         (ToolName::namespaced("mcp__sift_worker", "execute"), Some("sift-worker".to_owned())),
     ]).is_err());
     assert_eq!(read_worker_policy("registry-test", "after-config-change")["ready"], false);
-    assert!(executor_request_meta("registry-test", "turn-1", "call-1", &None, None).is_err());
+    assert!(executor_request_meta("registry-test", &registry_owner, "turn-1", "call-1", &None, None).is_err());
     for input in [
         json!({"type":"text","text":"task","text_elements":[]}),
         json!({"type":"localImage","path":"/path/must-not-be-read"}),
@@ -291,17 +292,17 @@ async fn isolated_dispatch_child() {
     // step-capture path with a different effective session configuration. Its
     // early rejection occurs before record_registry and must still revoke it.
     let inventory = || vec![(ToolName::namespaced("mcp__sift_worker", "execute"), Some("sift-worker".to_string()))];
-    record_registry(session_id.clone(), "worker-model", &config, inventory()).unwrap();
+    record_registry(session_id.clone(), &session.worker_registry, "worker-model", &config, inventory()).unwrap();
     assert_eq!(read_worker_policy(&session_id, "before-early-rejection")["configSha256"],
         crate::worker_policy_config::effective_config_sha256(&config).unwrap());
-    assert!(executor_request_meta(&session_id, "old-turn", "old-call", &None, None).is_ok());
+    assert!(executor_request_meta(&session_id, &session.worker_registry, "old-turn", "old-call", &None, None).is_ok());
     assert!(session.capture_step_context(turn.clone(), &tokio_util::sync::CancellationToken::new())
         .await.is_err());
     assert_eq!(read_worker_policy(&session_id, "after-early-rejection")["ready"], false);
-    assert!(executor_request_meta(&session_id, "old-turn", "old-call", &None, None).is_err());
+    assert!(executor_request_meta(&session_id, &session.worker_registry, "old-turn", "old-call", &None, None).is_err());
     // A start/steer configuration override is denied before mutation, preventing
     // an in-flight prepare from publishing evidence for an obsolete configuration.
-    record_registry(session_id.clone(), "worker-model", &config, inventory()).unwrap();
+    record_registry(session_id.clone(), &session.worker_registry, "worker-model", &config, inventory()).unwrap();
     let before_settings = session.thread_settings_snapshot().await;
     let approval_policy = if turn.config.permissions.approval_policy.value()
         == codex_protocol::protocol::AskForApproval::Never {
@@ -317,7 +318,7 @@ async fn isolated_dispatch_child() {
     }).await.is_err());
     assert_eq!(session.thread_settings_snapshot().await, before_settings);
     assert_eq!(read_worker_policy(&session_id, "after-denied-settings")["ready"], false);
-    assert!(executor_request_meta(&session_id, "old-turn", "old-call", &None, None).is_err());
+    assert!(executor_request_meta(&session_id, &session.worker_registry, "old-turn", "old-call", &None, None).is_err());
     let override_request: codex_app_server_protocol::ClientRequest = serde_json::from_value(json!({
         "method":"turn/start","id":2,"params":{"threadId":session_id,
             "input":[{"type":"text","text":"task","text_elements":[]}],"approvalPolicy":"never"}
@@ -348,6 +349,16 @@ async fn isolated_dispatch_child() {
         assert_eq!(result.is_ok(), name.name == "execute");
     }
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // A replacement owns a distinct native registry even for the same thread.
+    let replacement_owner = crate::worker_registry::WorkerRegistryOwner::default();
+    record_registry(session_id.clone(), &replacement_owner, "worker-model", &config, inventory()).unwrap();
+    assert!(executor_request_meta(&session_id, &session.worker_registry, "old-turn", "old-call", &None, None).is_err());
+    session.worker_registry.retire();
+    assert!(record_registry(session_id.clone(), &session.worker_registry, "worker-model", &config, inventory()).is_err());
+    assert!(executor_request_meta(&session_id, &replacement_owner, "new-turn", "new-call", &None, None).is_ok());
+    replacement_owner.retire();
+    assert_eq!(read_worker_policy(&session_id, "after-runtime-retirement")["ready"], false);
+    assert!(executor_request_meta(&session_id, &replacement_owner, "new-turn", "new-call", &None, None).is_err());
     std::fs::write(std::env::var_os("CODEX_WORKER_POLICY_TEST_RECEIPT").unwrap(), "dispatch-enforced").unwrap();
 }
 

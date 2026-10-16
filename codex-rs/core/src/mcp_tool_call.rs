@@ -538,6 +538,7 @@ async fn handle_approved_mcp_tool_call(
                     .await?;
                     let request_meta = crate::worker_policy::executor_request_meta(
                         &sess.thread_id.to_string(),
+                        &sess.worker_registry,
                         &turn_context.sub_id,
                         call_id,
                         &rewritten_arguments,

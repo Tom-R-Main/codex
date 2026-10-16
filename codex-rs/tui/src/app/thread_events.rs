@@ -795,6 +795,7 @@ mod tests {
                 approval_id: approval_id.map(str::to_string),
                 environment_id: None,
                 reason: Some("needs approval".to_string()),
+                sift_command_scope: None,
                 network_approval_context: None,
                 command: Some("echo hello".to_string()),
                 cwd: Some(test_path_buf("/tmp/project").abs().into()),
