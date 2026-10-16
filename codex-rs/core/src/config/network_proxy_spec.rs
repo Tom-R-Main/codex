@@ -89,6 +89,46 @@ impl ConfigReloader for StaticNetworkProxyReloader {
 }
 
 impl NetworkProxySpec {
+    /// Bind the loaded proxy state without exporting credential-bearing values.
+    /// Broker destination context has no stable public serialization: until it
+    /// has a qualified projection, a nonempty context cannot be attested.
+    pub(crate) fn worker_policy_sha256(&self) -> std::io::Result<String> {
+        if self.config.credential_broker_context != Default::default()
+            || self.base_config.credential_broker_context != Default::default()
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "worker proxy context cannot be bound",
+            ));
+        }
+        let constraints = &self.constraints;
+        crate::worker_policy::digest(&serde_json::json!({
+            "domain": "codex-worker-network-proxy-v1",
+            "baseConfig": self.base_config, "config": self.config,
+            "requirements": self.requirements,
+            "hardDenyAllowlistMisses": self.hard_deny_allowlist_misses,
+            // NetworkProxyConfig deliberately omits these runtime fields from
+            // ordinary config serialization. They still affect execution.
+            "brokerEnabledMitm": self.config.credential_broker_enabled_mitm,
+            "brokerOpenaiHost": self.config.credential_broker_openai_host,
+            "baseBrokerEnabledMitm": self.base_config.credential_broker_enabled_mitm,
+            "baseBrokerOpenaiHost": self.base_config.credential_broker_openai_host,
+            "constraints": {
+                "enabled": constraints.enabled, "mode": constraints.mode,
+                "upstreamProxy": constraints.allow_upstream_proxy,
+                "nonLoopback": constraints.dangerously_allow_non_loopback_proxy,
+                "allUnixSockets": constraints.dangerously_allow_all_unix_sockets,
+                "allowedDomains": constraints.allowed_domains,
+                "allowlistExpansion": constraints.allowlist_expansion_enabled,
+                "deniedDomains": constraints.denied_domains,
+                "denylistExpansion": constraints.denylist_expansion_enabled,
+                "unixSockets": constraints.allow_unix_sockets,
+                "localBinding": constraints.allow_local_binding,
+            },
+        }))
+        .map_err(|_| std::io::Error::other("worker proxy digest failed"))
+    }
+
     pub(crate) fn enabled(&self) -> bool {
         self.config.enabled
     }

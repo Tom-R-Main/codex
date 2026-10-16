@@ -1288,6 +1288,7 @@ async fn startup_thread_started_discards_another_threads_buffered_events() {
             approval_id: None,
             environment_id: None,
             reason: None,
+            sift_command_scope: None,
             network_approval_context: None,
             command: None,
             cwd: None,

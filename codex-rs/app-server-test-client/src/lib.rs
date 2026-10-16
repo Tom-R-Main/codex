@@ -2178,6 +2178,7 @@ impl CodexClient {
             approval_id,
             environment_id,
             reason,
+            sift_command_scope: _,
             network_approval_context,
             command,
             cwd,

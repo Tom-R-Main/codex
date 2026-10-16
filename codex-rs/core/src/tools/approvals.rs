@@ -720,6 +720,7 @@ impl Session {
                         additional_permissions.clone(),
                         /*available_decisions*/ None,
                         /*plugin_attribution_override*/ None,
+                        /*sift_command_scope*/ None,
                     )
                     .await
                 })
@@ -755,6 +756,7 @@ impl Session {
                     additional_permissions.clone(),
                     Some(vec![ReviewDecision::Approved, ReviewDecision::Abort]),
                     /*plugin_attribution_override*/ None,
+                    /*sift_command_scope*/ None,
                 )
                 .await
             }
@@ -763,6 +765,8 @@ impl Session {
                 approval_id,
                 environment_id,
                 command,
+                program,
+                argv,
                 cwd,
                 additional_permissions,
                 ..
@@ -782,6 +786,11 @@ impl Session {
                     additional_permissions.clone(),
                     Some(vec![ReviewDecision::Approved, ReviewDecision::Abort]),
                     /*plugin_attribution_override*/ None,
+                    Some(codex_protocol::approvals::SiftNativeCommandScope {
+                        program: program.clone(),
+                        argv: argv.clone(),
+                        cwd: cwd.clone(),
+                    }),
                 )
                 .await
             }
@@ -855,6 +864,7 @@ impl Session {
                     /*additional_permissions*/ None,
                     /*available_decisions*/ None,
                     /*plugin_attribution_override*/ None,
+                    /*sift_command_scope*/ None,
                 )
                 .await
             }

@@ -496,6 +496,12 @@ enum GetAccountRateLimitsParamsTypeScript {
 }
 
 client_request_definitions! {
+    #[experimental("workerPolicy/read")]
+    WorkerPolicyRead => "workerPolicy/read" {
+        params: v2::WorkerPolicyReadParams,
+        serialization: None,
+        response: v2::WorkerPolicyReadResponse,
+    },
     Initialize => "initialize" {
         params: v1::InitializeParams,
         serialization: None,
@@ -4587,6 +4593,7 @@ mod tests {
             command: Some("cat file".to_string()),
             cwd: None,
             command_actions: None,
+            sift_command_scope: None,
             additional_permissions: Some(v2::AdditionalPermissionProfile {
                 network: None,
                 file_system: Some(v2::AdditionalFileSystemPermissions {

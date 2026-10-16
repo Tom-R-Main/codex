@@ -500,15 +500,21 @@ async fn handle_approved_mcp_tool_call(
                             action_name: action_name.clone(),
                             model: step_context.settings.model_info.slug.clone(),
                         });
-                    let rewritten_arguments = rewrite_mcp_tool_arguments_for_openai_files(
-                        sess,
-                        step_context,
-                        arguments_value,
-                        metadata.openai_file_input_optional_fields.as_ref(),
-                        hosted_upload.as_ref(),
-                    )
-                    .await
-                    .map_err(anyhow::Error::msg)?;
+                    // The protected executor owns all file/network effects. Generic MCP file
+                    // rewriting must not read or upload model-selected paths before that boundary.
+                    let rewritten_arguments = if crate::worker_policy::restricted() {
+                        arguments_value
+                    } else {
+                        rewrite_mcp_tool_arguments_for_openai_files(
+                            sess,
+                            step_context,
+                            arguments_value,
+                            metadata.openai_file_input_optional_fields.as_ref(),
+                            hosted_upload.as_ref(),
+                        )
+                        .await
+                        .map_err(anyhow::Error::msg)?
+                    };
                     if let Some(rewritten_arguments) = rewritten_arguments.as_ref() {
                         tool_input = rewritten_arguments.clone();
                     }
@@ -530,6 +536,15 @@ async fn handle_approved_mcp_tool_call(
                         request_meta,
                     )
                     .await?;
+                    let request_meta = crate::worker_policy::executor_request_meta(
+                        &sess.thread_id.to_string(),
+                        &sess.worker_registry,
+                        &turn_context.sub_id,
+                        call_id,
+                        &rewritten_arguments,
+                        request_meta,
+                    )
+                    .map_err(anyhow::Error::msg)?;
                     let mcp_call_trace = sess
                         .services
                         .rollout_thread_trace

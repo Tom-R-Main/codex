@@ -54,6 +54,7 @@ pub(crate) struct ConfigManager {
     local_network_policy: codex_http_client::NetworkPolicyController,
     network_policy_reload: Arc<tokio::sync::Semaphore>,
     network_policy_snapshot: Arc<RwLock<Option<Arc<ApplicationPolicySnapshot>>>>,
+    sealed_worker: Option<Arc<codex_core::WorkerLaunchMaterialization>>,
 }
 
 /// Configuration and policy must finish loading against the same account and cloud snapshot.
@@ -93,7 +94,16 @@ impl ConfigManager {
             local_network_policy: Default::default(),
             network_policy_reload: Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
             network_policy_snapshot: Arc::default(),
+            sealed_worker: None,
         }
+    }
+
+    pub(crate) fn with_sealed_worker(
+        mut self,
+        source: Option<Arc<codex_core::WorkerLaunchMaterialization>>,
+    ) -> Self {
+        self.sealed_worker = source;
+        self
     }
 
     pub(crate) fn codex_home(&self) -> &Path {
@@ -131,6 +141,9 @@ impl ConfigManager {
     where
         I: IntoIterator<Item = (String, bool)>,
     {
+        if self.sealed_worker.is_some() {
+            return Err(());
+        }
         let mut runtime_feature_enablement =
             self.runtime_feature_enablement.write().map_err(|_| ())?;
         runtime_feature_enablement.extend(enablement);
@@ -143,6 +156,9 @@ impl ConfigManager {
         chatgpt_base_url: String,
         http_client_factory: codex_http_client::HttpClientFactory,
     ) {
+        if self.sealed_worker.is_some() {
+            return;
+        }
         let endpoint = codex_backend_client::Client::new(
             chatgpt_base_url.clone(),
             http_client_factory.clone(),
@@ -212,6 +228,13 @@ impl ConfigManager {
         session_layers: &ConfigLayerStack,
         cwd: &Path,
     ) -> std::io::Result<Config> {
+        if let Some(source) = &self.sealed_worker {
+            let config = source.load_config(&ConfigOverrides::default(), Some(cwd))?;
+            if &config.config_layer_stack != session_layers {
+                return Err(codex_core::worker_materialization_error());
+            }
+            return Ok(config);
+        }
         let refreshed_config = self.load_latest_config(Some(cwd.to_path_buf())).await?;
         let mut config = Config::rebuild_with_session_layers(
             session_layers,
@@ -238,6 +261,11 @@ impl ConfigManager {
         session_layers: &ConfigLayerStack,
         cwd: &Path,
     ) -> std::io::Result<Config> {
+        if self.sealed_worker.is_some() {
+            return self
+                .load_latest_config_with_session_layers(session_layers, cwd)
+                .await;
+        }
         let mut manager = self.clone();
         manager.thread_config_loader = Arc::new(codex_config::NoopThreadConfigLoader);
         let refreshed_layers = manager
@@ -263,6 +291,9 @@ impl ConfigManager {
         &self,
         current: &Config,
     ) -> std::io::Result<()> {
+        if let Some(source) = &self.sealed_worker {
+            return source.validate_config(current);
+        }
         let policy_load = self.refresh_application_network_policy().await?;
         // Existing threads retain their session route; only managed
         // requirements can invalidate it.
@@ -338,6 +369,9 @@ impl ConfigManager {
     }
 
     pub(crate) async fn load_default_config(&self) -> std::io::Result<Config> {
+        if let Some(source) = &self.sealed_worker {
+            return source.load_config(&ConfigOverrides::default(), /*fallback_cwd*/ None);
+        }
         let mut loader_overrides = self.loader_overrides.clone();
         loader_overrides.ignore_user_config = true;
         loader_overrides.ignore_project_config = true;
@@ -425,6 +459,25 @@ impl ConfigManager {
         .await
     }
 
+    /// Apply the actual cold-resume reasoning reset, then compare the final
+    /// Config before thread restoration, MCP startup or any model dispatch.
+    pub(crate) fn finalize_resume_config(
+        &self,
+        mut config: Config,
+        clear_reasoning_effort: bool,
+    ) -> std::io::Result<Config> {
+        if clear_reasoning_effort {
+            config.model_reasoning_effort = None;
+        }
+        if let Some(source) = &self.sealed_worker {
+            let sealed = source.load_config(&Default::default(), None)?;
+            if config != sealed {
+                return Err(codex_core::worker_materialization_error());
+            }
+        }
+        Ok(config)
+    }
+
     #[instrument(level = "trace", skip_all)]
     pub(crate) async fn load_with_cli_overrides(
         &self,
@@ -433,6 +486,26 @@ impl ConfigManager {
         mut typesafe_overrides: ConfigOverrides,
         fallback_cwd: Option<PathBuf>,
     ) -> std::io::Result<Config> {
+        if let Some(source) = &self.sealed_worker {
+            if !cli_overrides.is_empty() {
+                return Err(codex_core::worker_materialization_error());
+            }
+            let config = source.load_config(&typesafe_overrides, fallback_cwd.as_deref())?;
+            // Cold resume re-inserts persisted reasoning metadata. Accept only
+            // an exact identity assertion, never a configuration mutation.
+            if request_overrides.as_ref().is_some_and(|overrides| {
+                overrides.iter().any(|(key, value)| {
+                    key != "model_reasoning_effort"
+                        || serde_json::to_value(config.model_reasoning_effort)
+                            .ok()
+                            .as_ref()
+                            != Some(value)
+                })
+            }) {
+                return Err(codex_core::worker_materialization_error());
+            }
+            return Ok(config);
+        }
         let policy_load = self.refresh_application_network_policy().await?;
         let mut request_overrides = request_overrides.unwrap_or_default();
         if let Some(value) = request_overrides.remove("bypass_hook_trust") {
@@ -482,6 +555,14 @@ impl ConfigManager {
         &self,
         cwd: Option<AbsolutePathBuf>,
     ) -> std::io::Result<ConfigLayerStack> {
+        if let Some(source) = &self.sealed_worker {
+            return source
+                .load_config(
+                    &ConfigOverrides::default(),
+                    cwd.as_ref().map(AbsolutePathBuf::as_path),
+                )
+                .map(|config| config.config_layer_stack);
+        }
         let policy_load = self.refresh_application_network_policy().await?;
         let result = load_config_layers_state(
             LOCAL_FS.as_ref(),

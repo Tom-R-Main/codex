@@ -131,6 +131,7 @@ mod plugin_config_reload;
 mod request_processors;
 mod request_serialization;
 mod server_request_error;
+mod sift_command_scope;
 mod skills_watcher;
 mod thread_state;
 mod thread_status;
@@ -139,6 +140,8 @@ mod turn_admission;
 mod turn_cost_worker;
 mod user_verification;
 mod user_verification_response;
+mod worker_launch;
+pub use worker_launch::run_worker_config_materializer;
 
 pub use crate::code_mode_host::AppServerCodeModeHostArgs;
 pub use crate::code_mode_host::CodeModeHostTransport;
@@ -498,6 +501,8 @@ pub async fn run_main_with_transport_options(
     auth: AppServerWebsocketAuthSettings,
     runtime_options: AppServerRuntimeOptions,
 ) -> IoResult<AppServerExit> {
+    codex_core::initialize_worker_policy()?;
+    let sealed_worker = worker_launch::take_worker_launch(&arg0_paths).await?;
     #[cfg(target_os = "windows")]
     let _registered_core = codex_windows_sandbox::registered_core_requested();
     let loader_overrides = loader_overrides_with_test_user_config_file(
@@ -518,12 +523,16 @@ pub async fn run_main_with_transport_options(
             format!("error parsing -c overrides: {e}"),
         )
     })?;
+    if sealed_worker.is_some() && !cli_kv_overrides.is_empty() {
+        return Err(codex_core::worker_materialization_error());
+    }
     let codex_home = find_codex_home()?;
     let local_runtime_paths = ExecServerRuntimePaths::from_optional_paths(
         arg0_paths.codex_self_exe.clone(),
         arg0_paths.codex_linux_sandbox_exe.clone(),
     )?;
-    let ignore_user_config = loader_overrides.ignore_user_config;
+    let ignore_user_config = sealed_worker.is_some() || loader_overrides.ignore_user_config;
+    let restricted_startup = sealed_worker.is_some();
     let config_manager = ConfigManager::new(
         codex_home.to_path_buf(),
         cli_kv_overrides.clone(),
@@ -532,19 +541,24 @@ pub async fn run_main_with_transport_options(
         Default::default(),
         arg0_paths.clone(),
         Arc::new(NoopThreadConfigLoader),
-    );
-    let bootstrap_config = config_manager
-        .load_startup_config(/*fallback_cwd*/ None)
-        .await?;
-    let bootstrap_auth =
-        AuthManager::shared_from_config(&bootstrap_config, /*enable_codex_api_key_env*/ false)
-            .await
-            .map_err(std::io::Error::other)?;
-    config_manager.replace_cloud_config_bundle_loader(
-        bootstrap_auth,
-        bootstrap_config.chatgpt_base_url.clone(),
-        bootstrap_config.http_client_factory(),
-    );
+    )
+    .with_sealed_worker(sealed_worker);
+    if !restricted_startup {
+        let bootstrap_config = config_manager
+            .load_startup_config(/*fallback_cwd*/ None)
+            .await?;
+        let bootstrap_auth = AuthManager::shared_from_config(
+            &bootstrap_config,
+            /*enable_codex_api_key_env*/ false,
+        )
+        .await
+        .map_err(std::io::Error::other)?;
+        config_manager.replace_cloud_config_bundle_loader(
+            bootstrap_auth,
+            bootstrap_config.chatgpt_base_url.clone(),
+            bootstrap_config.http_client_factory(),
+        );
+    }
     let mut config_warnings = Vec::new();
     let mut plugin_startup_config = PluginStartupConfig::Current;
     let config = match config_manager
@@ -556,7 +570,7 @@ pub async fn run_main_with_transport_options(
             return Err(err);
         }
         Err(err) => {
-            if strict_config {
+            if strict_config || restricted_startup {
                 return Err(err);
             }
 
@@ -571,11 +585,18 @@ pub async fn run_main_with_transport_options(
             })?
         }
     };
+    codex_core::validate_worker_config(&config)?;
     config.auth_config().validate()?;
-    let auth_manager =
+    let auth_manager = if restricted_startup {
+        Arc::new(AuthManager::new_isolated_ephemeral(
+            config.codex_home.to_path_buf(),
+            codex_login::AuthRouteConfig::from_http_client_factory(config.http_client_factory()),
+        ))
+    } else {
         AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false)
             .await
-            .map_err(std::io::Error::other)?;
+            .map_err(std::io::Error::other)?
+    };
     config_manager.replace_cloud_config_bundle_loader(
         auth_manager.clone(),
         config.chatgpt_base_url.clone(),

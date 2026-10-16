@@ -1199,6 +1199,7 @@ mod tests {
                 command: Some("echo hi".to_string()),
                 cwd: None,
                 command_actions: None,
+                sift_command_scope: None,
                 additional_permissions: None,
                 proposed_execpolicy_amendment: None,
                 proposed_network_policy_amendments: None,

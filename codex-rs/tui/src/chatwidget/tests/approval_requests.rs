@@ -62,6 +62,7 @@ fn app_server_exec_approval_request_splits_shell_wrapped_command() {
             approval_id: Some("approval-1".to_string()),
             environment_id: None,
             reason: None,
+            sift_command_scope: None,
             network_approval_context: None,
             command: Some(
                 shlex::try_join(["/bin/zsh", "-lc", script])
@@ -100,6 +101,7 @@ async fn app_server_write_stdin_approval_renders_terminal_input() {
             approval_id: Some("approval-1".to_string()),
             environment_id: None,
             reason: None,
+            sift_command_scope: None,
             network_approval_context: None,
             command: Some(
                 shlex::try_join(["write_stdin", "--session-id", "42", "confirm\n"])
@@ -141,6 +143,7 @@ fn app_server_exec_approval_request_preserves_permissions_context() {
             approval_id: Some("approval-1".to_string()),
             environment_id: None,
             reason: None,
+            sift_command_scope: None,
             network_approval_context: Some(codex_app_server_protocol::NetworkApprovalContext {
                 host: "example.com".to_string(),
                 protocol: codex_app_server_protocol::NetworkApprovalProtocol::Socks5Tcp,
@@ -202,6 +205,7 @@ async fn network_exec_approval_history_describes_session_host_allowance() {
             approval_id: Some("approval-1".to_string()),
             environment_id: None,
             reason: None,
+            sift_command_scope: None,
             network_approval_context: Some(codex_app_server_protocol::NetworkApprovalContext {
                 host: "example.com".to_string(),
                 protocol: codex_app_server_protocol::NetworkApprovalProtocol::Https,
@@ -245,6 +249,7 @@ async fn network_exec_approval_history_describes_one_time_host_allowance() {
             approval_id: Some("approval-1".to_string()),
             environment_id: None,
             reason: None,
+            sift_command_scope: None,
             network_approval_context: Some(codex_app_server_protocol::NetworkApprovalContext {
                 host: "example.com".to_string(),
                 protocol: codex_app_server_protocol::NetworkApprovalProtocol::Http,
@@ -288,6 +293,7 @@ async fn network_exec_approval_history_describes_canceled_host_request() {
             approval_id: Some("approval-1".to_string()),
             environment_id: None,
             reason: None,
+            sift_command_scope: None,
             network_approval_context: Some(codex_app_server_protocol::NetworkApprovalContext {
                 host: "example.com".to_string(),
                 protocol: codex_app_server_protocol::NetworkApprovalProtocol::Socks5Tcp,

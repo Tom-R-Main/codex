@@ -16,6 +16,10 @@ path = "src/bin/notify_capture.rs"
 name = "exec-server"
 path = "src/bin/exec_server.rs"
 
+[[bin]]
+name = "codex-worker-config"
+path = "src/bin/worker_config.rs"
+
 [lib]
 name = "codex_app_server"
 path = "src/lib.rs"

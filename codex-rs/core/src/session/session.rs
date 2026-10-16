@@ -57,6 +57,7 @@ type McpToolApprovalMetadataMap =
 /// A session has at most 1 running task at a time, and can be interrupted by user input.
 pub(crate) struct Session {
     pub(crate) thread_id: ThreadId,
+    pub(crate) worker_registry: crate::worker_registry::WorkerRegistryOwner,
     pub(crate) installation_id: String,
     pub(super) tx_event: Sender<Event>,
     pub(super) agent_status: watch::Sender<AgentStatus>,
@@ -87,6 +88,9 @@ pub(crate) struct Session {
     pub(super) mcp_prewarm_task: std::sync::Mutex<Option<JoinHandle<()>>>,
     pub(crate) conversation: Arc<RealtimeConversationManager>,
     pub(crate) realtime_history: Option<Mutex<crate::realtime_history::RealtimeHistoryState>>,
+    // Lock before active_turn when reserving/registering a task. Preflight holds
+    // this across discovery, but never holds active_turn or state across it.
+    pub(crate) turn_admission: Mutex<()>,
     pub(crate) active_turn: Mutex<Option<ActiveTurn>>,
     pub(crate) async_hook_results: async_channel::Receiver<HookCompletedEvent>,
     pub(crate) input_queue: InputQueue,
@@ -773,6 +777,7 @@ impl Session {
         git_enrichment_policy: GitEnrichmentPolicy,
         windows_sandbox_proxy_settings_mode: codex_sandboxing::WindowsSandboxProxySettingsMode,
     ) -> anyhow::Result<Arc<Self>> {
+        crate::worker_policy::validate_worker_config(&config)?;
         debug!(
             "Configuring session: model={}; provider={:?}",
             session_configuration
@@ -1389,7 +1394,7 @@ impl Session {
                 );
             let use_executor_shell_snapshots =
                 prefer_executor_shell_snapshots && !credential_broker_active;
-            let shell_snapshot = if config.features.enabled(Feature::ShellSnapshot)
+            let shell_snapshot = if !crate::worker_policy::restricted() && config.features.enabled(Feature::ShellSnapshot)
                 && (!use_executor_shell_snapshots || credential_broker_available)
             {
                 let snapshot_credential_broker = credential_broker_available.then(|| {
@@ -1747,6 +1752,7 @@ impl Session {
             let (mcp_prewarm_tx, mcp_prewarm_rx) = async_channel::bounded(1);
             let sess = Arc::new(Session {
                 thread_id,
+                worker_registry: Default::default(),
                 installation_id,
                 tx_event: tx_event.clone(),
                 agent_status,
@@ -1770,6 +1776,7 @@ impl Session {
                 realtime_history: (session_configuration.history_mode == ThreadHistoryMode::Paginated
                     && services.live_thread.is_some())
                 .then(|| Mutex::new(Default::default())),
+                turn_admission: Mutex::new(()),
                 active_turn: Mutex::new(None),
                 async_hook_results,
                 input_queue: InputQueue::new(),

@@ -643,6 +643,30 @@ impl ThreadRequestProcessor {
         }
     }
 
+    pub(crate) async fn worker_policy_read(
+        &self,
+        params: codex_app_server_protocol::WorkerPolicyReadParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let attestation = if params.prepare {
+            let thread_id = ThreadId::from_string(&params.thread_id)
+                .map_err(|_| invalid_request("invalid worker thread id"))?;
+            let thread = self
+                .thread_manager
+                .get_thread(thread_id)
+                .await
+                .map_err(|_| invalid_request("worker thread must already be loaded"))?;
+            thread
+                .prepare_worker_policy(&params.challenge)
+                .await
+                .map_err(|error| invalid_request(error.to_string()))?
+        } else {
+            codex_core::read_worker_policy(&params.thread_id, &params.challenge)
+        };
+        Ok(Some(
+            codex_app_server_protocol::WorkerPolicyReadResponse { attestation }.into(),
+        ))
+    }
+
     pub(crate) async fn thread_increment_elicitation(
         &self,
         params: ThreadIncrementElicitationParams,
@@ -1340,6 +1364,8 @@ impl ThreadRequestProcessor {
             .load_with_overrides(config_overrides.clone(), typesafe_overrides.clone())
             .await
             .map_err(|err| config_load_error(&err))?;
+        codex_core::validate_worker_config(&config)
+            .map_err(|error| invalid_request(error.to_string()))?;
         if config.ephemeral && daybreak_enabled.is_some() {
             return Err(invalid_request(
                 "daybreakEnabled is not supported for ephemeral threads",
@@ -1358,7 +1384,8 @@ impl ThreadRequestProcessor {
             }
         };
 
-        if requested_cwd.is_some()
+        if !codex_core::worker_is_restricted()
+            && requested_cwd.is_some()
             && config.active_project.trust_level.is_none()
             && !config.config_layer_stack.is_projectless()
             && effective_permissions_trust_project
@@ -3918,9 +3945,10 @@ impl ThreadRequestProcessor {
                 return Ok(ControlFlow::Continue(()));
             }
         };
-        if clear_reasoning_effort {
-            config.model_reasoning_effort = None;
-        }
+        config = self
+            .config_manager
+            .finalize_resume_config(config, clear_reasoning_effort)
+            .map_err(|err| config_load_error(&err))?;
 
         let response_history = thread_history.clone();
 
@@ -6312,3 +6340,7 @@ fn build_thread_from_loaded_snapshot(
 #[cfg(test)]
 #[path = "thread_processor_tests.rs"]
 mod thread_processor_tests;
+
+#[cfg(test)]
+#[path = "worker_resume_tests.rs"]
+mod worker_resume_tests;

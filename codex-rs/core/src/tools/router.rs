@@ -93,6 +93,29 @@ pub(crate) struct ToolSuggestCandidates {
 }
 
 impl ToolRouter {
+    pub(crate) fn record_worker_registry(
+        &self,
+        session: &Session,
+        model: &str,
+        config: &crate::config::Config,
+    ) -> Result<(), String> {
+        crate::worker_policy::record_registry(
+            session.thread_id.to_string(),
+            &session.worker_registry,
+            model,
+            config,
+            self.registry
+                .entries()
+                .map(|tool| {
+                    (
+                        tool.runtime.tool_name().with_default_namespace(),
+                        tool.runtime.mcp_server_name().map(str::to_string),
+                    )
+                })
+                .collect(),
+        )
+    }
+
     #[cfg(test)]
     pub(crate) fn from_registry(
         turn_context: &TurnContext,

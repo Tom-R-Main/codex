@@ -2600,7 +2600,7 @@ fn resolve_permission_config_syntax(
 }
 
 /// Optional overrides for user configuration (e.g., from CLI flags).
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub struct ConfigOverrides {
     pub model: Option<String>,
     pub review_model: Option<String>,
@@ -3173,6 +3173,12 @@ fn validate_multi_agent_v2_tool_namespace(namespace: Option<&str>) -> std::io::R
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum ConfigLoadSource {
+    Ambient,
+    SealedWorker,
+}
+
 impl Config {
     #[cfg(test)]
     async fn load_from_base_config_with_overrides(
@@ -3194,10 +3200,46 @@ impl Config {
 
     pub(crate) async fn load_config_with_layer_stack(
         fs: &dyn ExecutorFileSystem,
+        cfg: ConfigToml,
+        overrides: ConfigOverrides,
+        codex_home: AbsolutePathBuf,
+        config_layer_stack: ConfigLayerStack,
+    ) -> std::io::Result<Self> {
+        Self::load_config_with_layer_stack_source(
+            fs,
+            cfg,
+            overrides,
+            codex_home,
+            config_layer_stack,
+            ConfigLoadSource::Ambient,
+        )
+        .await
+    }
+
+    pub(crate) async fn load_sealed_worker_config(
+        cfg: ConfigToml,
+        overrides: ConfigOverrides,
+        codex_home: AbsolutePathBuf,
+        config_layer_stack: ConfigLayerStack,
+    ) -> std::io::Result<Self> {
+        Self::load_config_with_layer_stack_source(
+            LOCAL_FS.as_ref(),
+            cfg,
+            overrides,
+            codex_home,
+            config_layer_stack,
+            ConfigLoadSource::SealedWorker,
+        )
+        .await
+    }
+
+    async fn load_config_with_layer_stack_source(
+        fs: &dyn ExecutorFileSystem,
         mut cfg: ConfigToml,
         overrides: ConfigOverrides,
         codex_home: AbsolutePathBuf,
         config_layer_stack: ConfigLayerStack,
+        source: ConfigLoadSource,
     ) -> std::io::Result<Self> {
         // Keep the large config-construction future off small test thread stacks.
         Box::pin(async move {
@@ -3421,7 +3463,10 @@ impl Config {
             .into_iter()
             .map(|path| AbsolutePathBuf::resolve_path_against_base(path, resolved_cwd.as_path()))
             .collect();
-        let repo_root = resolve_root_git_project_for_trust(fs, &resolved_cwd).await;
+        let repo_root = match source {
+            ConfigLoadSource::Ambient => resolve_root_git_project_for_trust(fs, &resolved_cwd).await,
+            ConfigLoadSource::SealedWorker => None,
+        };
         let active_project = cfg
             .get_active_project(
                 resolved_cwd.as_path(),
@@ -3774,8 +3819,12 @@ impl Config {
             .clone()
             .filter(|value| !value.is_empty());
 
+        let built_in_providers = match source {
+            ConfigLoadSource::Ambient => built_in_model_providers(openai_base_url),
+            ConfigLoadSource::SealedWorker => HashMap::new(),
+        };
         let model_providers =
-            merge_configured_model_providers(built_in_model_providers(openai_base_url), cfg.model_providers)
+            merge_configured_model_providers(built_in_providers, cfg.model_providers)
                 .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?;
 
         let model_provider_id = config_layer_stack.required_model_provider().map(str::to_string)
@@ -4020,9 +4069,12 @@ impl Config {
         )
         .await?;
         let compact_prompt = compact_prompt.or(file_compact_prompt);
-        let zsh_path = default_zsh_path
-            .or_else(|| InstallContext::current().bundled_zsh_path())
-            .map(AbsolutePathBuf::into_path_buf);
+        let zsh_path = match source {
+            ConfigLoadSource::Ambient => default_zsh_path.or_else(|| InstallContext::current().bundled_zsh_path()),
+            // The sealed runtime contract supplies Some(path) or explicit None;
+            // do not discover an extra executable from the helper's installation.
+            ConfigLoadSource::SealedWorker => default_zsh_path,
+        }.map(AbsolutePathBuf::into_path_buf);
 
         let review_model = override_review_model.or(cfg.review_model);
 
@@ -4034,7 +4086,10 @@ impl Config {
             .as_ref()
             .map(AbsolutePathBuf::to_path_buf)
             .unwrap_or_else(|| codex_home.join("log").to_path_buf());
-        let sqlite_home_env = resolve_sqlite_home_env(&resolved_cwd);
+        let sqlite_home_env = match source {
+            ConfigLoadSource::Ambient => resolve_sqlite_home_env(&resolved_cwd),
+            ConfigLoadSource::SealedWorker => None,
+        };
         requirements::push_sqlite_home_env_override_warning(
             configured_sqlite_home.as_ref(),
             sqlite_home_env.as_deref(),

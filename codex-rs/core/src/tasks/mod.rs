@@ -312,6 +312,7 @@ impl Session {
 
         let (pending_items, _) = self.input_queue.drain_mailbox_input_items().await;
         let turn_state = {
+            let _admission = self.turn_admission.lock().await;
             let mut active = self.active_turn.lock().await;
             self.record_started_turn(&turn_context.sub_id).await;
             let turn = active.get_or_insert_with(ActiveTurn::default);
@@ -329,6 +330,7 @@ impl Session {
         )
         .await;
 
+        let _admission = self.turn_admission.lock().await;
         let mut active = self.active_turn.lock().await;
         let turn = active.get_or_insert_with(ActiveTurn::default);
         debug_assert!(turn.task.is_none());
@@ -459,6 +461,7 @@ impl Session {
         }
 
         let turn_state = {
+            let _admission = self.turn_admission.lock().await;
             let mut active_turn = self.active_turn.lock().await;
             if active_turn.is_some() {
                 return;
