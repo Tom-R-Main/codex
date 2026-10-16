@@ -59,13 +59,14 @@ pub(crate) fn effective_config_projection(config: &Config) -> Result<serde_json:
             .map(|network| network.worker_policy_sha256())
             .transpose()
             .map_err(serde_json::Error::io)?;
-        let residency = config
-            .enforce_residency
-            .get()
-            .as_ref()
-            .map(|requirement| match requirement {
-                codex_config::ResidencyRequirement::Us => "us",
-            });
+        let residency =
+            config
+                .enforce_residency
+                .get()
+                .as_ref()
+                .map(|requirement| match requirement {
+                    codex_config::ResidencyRequirement::Us => "us",
+                });
         Ok(EffectiveWorkerConfigV1 {
             domain: "codex-worker-loaded-config",
             schema_version: CONFIG_SCHEMA_VERSION,
