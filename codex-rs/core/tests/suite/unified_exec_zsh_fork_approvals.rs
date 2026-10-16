@@ -259,10 +259,17 @@ async fn unified_exec_zsh_fork_parent_approval_keeps_explicit_prompt_rule() -> R
                 Some([ReviewDecision::Approved, ReviewDecision::Abort].as_slice()),
             )
         );
-        let native = inner_approval.sift_command_scope.as_ref()
+        let native = inner_approval
+            .sift_command_scope
+            .as_ref()
             .context("intercepted execve must retain native program and raw argv")?;
         assert!(native.program.as_path().ends_with("touch"));
-        assert!(native.argv.iter().any(|arg| arg == outside_path.to_string_lossy().as_ref()));
+        assert!(
+            native
+                .argv
+                .iter()
+                .any(|arg| arg == outside_path.to_string_lossy().as_ref())
+        );
         assert!(!native.argv.is_empty());
         let approval_id = inner_approval
             .approval_id
@@ -954,8 +961,10 @@ async fn expect_exec_approval(
                 last_arg, expected_command,
                 "approval request should be for the parent unified-exec command"
             );
-            assert!(approval.sift_command_scope.is_none(),
-                "pre-rewrite parent shell approval is not native execve identity");
+            assert!(
+                approval.sift_command_scope.is_none(),
+                "pre-rewrite parent shell approval is not native execve identity"
+            );
             approval
         }
         EventMsg::TurnComplete(_) => panic!("expected approval request before completion"),

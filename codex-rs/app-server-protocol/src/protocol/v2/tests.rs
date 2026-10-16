@@ -5330,18 +5330,33 @@ fn sift_command_scope_is_additive_and_retains_native_argv_zero() {
         "threadId":"thread-1", "turnId":"turn-1", "itemId":"call-1", "startedAtMs":1,
         "command":"display only"
     });
-    let request: CommandExecutionRequestApprovalParams = serde_json::from_value(legacy.clone()).unwrap();
+    let request: CommandExecutionRequestApprovalParams =
+        serde_json::from_value(legacy.clone()).unwrap();
     assert!(request.sift_command_scope.is_none());
-    assert!(serde_json::to_value(request).unwrap().get("siftCommandScope").is_none());
+    assert!(
+        serde_json::to_value(request)
+            .unwrap()
+            .get("siftCommandScope")
+            .is_none()
+    );
     let mut native = legacy;
     native["siftCommandScope"] = json!({
         "version":1, "program":"/usr/bin/printf", "argv":["custom-argv-zero","a b",""], "cwd":"/workspace"
     });
     let request: CommandExecutionRequestApprovalParams = serde_json::from_value(native).unwrap();
-    assert_eq!(request.sift_command_scope, Some(SiftCommandScope {
-        version:1, program:"/usr/bin/printf".to_owned(),
-        argv:vec!["custom-argv-zero".to_owned(),"a b".to_owned(),"".to_owned()], cwd:"/workspace".to_owned()
-    }));
+    assert_eq!(
+        request.sift_command_scope,
+        Some(SiftCommandScope {
+            version: 1,
+            program: "/usr/bin/printf".to_owned(),
+            argv: vec![
+                "custom-argv-zero".to_owned(),
+                "a b".to_owned(),
+                "".to_owned()
+            ],
+            cwd: "/workspace".to_owned()
+        })
+    );
     let invalid = json!({"version":1,"program":"/bin/echo","argv":["echo"],"cwd":"/workspace","displayFallback":true});
     assert!(serde_json::from_value::<SiftCommandScope>(invalid).is_err());
 }

@@ -10,15 +10,23 @@ pub(crate) fn from_approval(event: &ExecApprovalRequestEvent) -> Option<SiftComm
         || native.argv.is_empty()
         || native.argv.len() > 256
         || native.argv[0].is_empty()
-        || native.argv.iter().any(|arg| arg.contains('\0') || arg.len() > 16_384)
+        || native
+            .argv
+            .iter()
+            .any(|arg| arg.contains('\0') || arg.len() > 16_384)
         || native.argv.iter().map(String::len).sum::<usize>() > 65_536
     {
         return None;
     }
     let cwd = native.cwd.as_path().to_str()?;
     let program = native.program.as_path().to_str()?;
-    if cwd.is_empty() || cwd.len() > 4096 || cwd.contains('\0')
-        || program.is_empty() || program.len() > 4096 || program.contains('\0') {
+    if cwd.is_empty()
+        || cwd.len() > 4096
+        || cwd.contains('\0')
+        || program.is_empty()
+        || program.len() > 4096
+        || program.contains('\0')
+    {
         return None;
     }
     Some(SiftCommandScope {

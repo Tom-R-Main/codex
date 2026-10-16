@@ -52,7 +52,7 @@ async fn stale_old_runtime_cleanup_preserves_a_resumed_replacement_registry() {
     let replacement = manager.start_thread(StartThreadOptions {
         initial_history: InitialHistory::Resumed(codex_history::ResumedHistory {
             conversation_id: old.thread_id, history: Arc::new(Vec::new()), rollout_path: None }),
-        environments: Some(Vec::new()), ..StartThreadOptions::new(config),
+        environments: Some(Vec::new()), ..StartThreadOptions::new(config)
     }).await.unwrap();
     assert_eq!(replacement.thread_id, old.thread_id);
     worker_registry::publish(key.clone(), &replacement.thread.session.worker_registry, json!({"runtime":"new"})).unwrap();

@@ -98,7 +98,10 @@ impl ConfigManager {
         }
     }
 
-    pub(crate) fn with_sealed_worker(mut self, source: Option<Arc<codex_core::WorkerLaunchMaterialization>>) -> Self {
+    pub(crate) fn with_sealed_worker(
+        mut self,
+        source: Option<Arc<codex_core::WorkerLaunchMaterialization>>,
+    ) -> Self {
         self.sealed_worker = source;
         self
     }
@@ -138,7 +141,9 @@ impl ConfigManager {
     where
         I: IntoIterator<Item = (String, bool)>,
     {
-        if self.sealed_worker.is_some() { return Err(()); }
+        if self.sealed_worker.is_some() {
+            return Err(());
+        }
         let mut runtime_feature_enablement =
             self.runtime_feature_enablement.write().map_err(|_| ())?;
         runtime_feature_enablement.extend(enablement);
@@ -151,7 +156,9 @@ impl ConfigManager {
         chatgpt_base_url: String,
         http_client_factory: codex_http_client::HttpClientFactory,
     ) {
-        if self.sealed_worker.is_some() { return; }
+        if self.sealed_worker.is_some() {
+            return;
+        }
         let endpoint = codex_backend_client::Client::new(
             chatgpt_base_url.clone(),
             http_client_factory.clone(),
@@ -223,7 +230,9 @@ impl ConfigManager {
     ) -> std::io::Result<Config> {
         if let Some(source) = &self.sealed_worker {
             let config = source.load_config(&ConfigOverrides::default(), Some(cwd))?;
-            if &config.config_layer_stack != session_layers { return Err(codex_core::worker_materialization_error()); }
+            if &config.config_layer_stack != session_layers {
+                return Err(codex_core::worker_materialization_error());
+            }
             return Ok(config);
         }
         let refreshed_config = self.load_latest_config(Some(cwd.to_path_buf())).await?;
@@ -253,7 +262,9 @@ impl ConfigManager {
         cwd: &Path,
     ) -> std::io::Result<Config> {
         if self.sealed_worker.is_some() {
-            return self.load_latest_config_with_session_layers(session_layers, cwd).await;
+            return self
+                .load_latest_config_with_session_layers(session_layers, cwd)
+                .await;
         }
         let mut manager = self.clone();
         manager.thread_config_loader = Arc::new(codex_config::NoopThreadConfigLoader);
@@ -450,11 +461,19 @@ impl ConfigManager {
 
     /// Apply the actual cold-resume reasoning reset, then compare the final
     /// Config before thread restoration, MCP startup or any model dispatch.
-    pub(crate) fn finalize_resume_config(&self, mut config: Config, clear_reasoning_effort: bool) -> std::io::Result<Config> {
-        if clear_reasoning_effort { config.model_reasoning_effort = None; }
+    pub(crate) fn finalize_resume_config(
+        &self,
+        mut config: Config,
+        clear_reasoning_effort: bool,
+    ) -> std::io::Result<Config> {
+        if clear_reasoning_effort {
+            config.model_reasoning_effort = None;
+        }
         if let Some(source) = &self.sealed_worker {
             let sealed = source.load_config(&Default::default(), None)?;
-            if config != sealed { return Err(codex_core::worker_materialization_error()); }
+            if config != sealed {
+                return Err(codex_core::worker_materialization_error());
+            }
         }
         Ok(config)
     }
@@ -468,13 +487,21 @@ impl ConfigManager {
         fallback_cwd: Option<PathBuf>,
     ) -> std::io::Result<Config> {
         if let Some(source) = &self.sealed_worker {
-            if !cli_overrides.is_empty() { return Err(codex_core::worker_materialization_error()); }
+            if !cli_overrides.is_empty() {
+                return Err(codex_core::worker_materialization_error());
+            }
             let config = source.load_config(&typesafe_overrides, fallback_cwd.as_deref())?;
             // Cold resume re-inserts persisted reasoning metadata. Accept only
             // an exact identity assertion, never a configuration mutation.
-            if request_overrides.as_ref().is_some_and(|overrides| overrides.iter().any(|(key, value)|
-                key != "model_reasoning_effort"
-                    || serde_json::to_value(config.model_reasoning_effort).ok().as_ref() != Some(value))) {
+            if request_overrides.as_ref().is_some_and(|overrides| {
+                overrides.iter().any(|(key, value)| {
+                    key != "model_reasoning_effort"
+                        || serde_json::to_value(config.model_reasoning_effort)
+                            .ok()
+                            .as_ref()
+                            != Some(value)
+                })
+            }) {
                 return Err(codex_core::worker_materialization_error());
             }
             return Ok(config);
@@ -529,7 +556,11 @@ impl ConfigManager {
         cwd: Option<AbsolutePathBuf>,
     ) -> std::io::Result<ConfigLayerStack> {
         if let Some(source) = &self.sealed_worker {
-            return source.load_config(&ConfigOverrides::default(), cwd.as_ref().map(AbsolutePathBuf::as_path))
+            return source
+                .load_config(
+                    &ConfigOverrides::default(),
+                    cwd.as_ref().map(AbsolutePathBuf::as_path),
+                )
                 .map(|config| config.config_layer_stack);
         }
         let policy_load = self.refresh_application_network_policy().await?;

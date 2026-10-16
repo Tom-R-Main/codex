@@ -211,11 +211,12 @@ async fn provider_requirement_load_errors_reject_input() -> Result<()> {
     Ok(())
 }
 
-
 #[tokio::test]
-async fn sealed_turn_provider_checks_retained_native_policy_without_ambient_discovery() -> Result<()> {
+async fn sealed_turn_provider_checks_retained_native_policy_without_ambient_discovery() -> Result<()>
+{
     let root = tempdir()?;
-    let (mut manager, native) = crate::worker_launch::tests::sealed_manager_fixture(root.path()).await;
+    let (mut manager, native) =
+        crate::worker_launch::tests::sealed_manager_fixture(root.path()).await;
     let requirements = root.path().join("requirements.toml");
     manager.loader_overrides = LoaderOverrides::without_managed_config_for_tests();
     manager.loader_overrides.system_requirements_path = Some(requirements.clone());
@@ -223,13 +224,21 @@ async fn sealed_turn_provider_checks_retained_native_policy_without_ambient_disc
     let observed = Arc::clone(&cloud_calls);
     manager.cloud_config_bundle = Arc::new(RwLock::new(CloudConfigBundleLoader::new(async move {
         observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Err(CloudConfigBundleLoadError::new(CloudConfigBundleLoadErrorCode::RequestFailed,
-            /*status_code*/ None, "ambient policy must not be discovered for sealed workers"))
+        Err(CloudConfigBundleLoadError::new(
+            CloudConfigBundleLoadErrorCode::RequestFailed,
+            /*status_code*/ None,
+            "ambient policy must not be discovered for sealed workers",
+        ))
     })));
-    for ambient in ["model_provider = 'different-provider'", "invalid ambient requirements = ["] {
+    for ambient in [
+        "model_provider = 'different-provider'",
+        "invalid ambient requirements = [",
+    ] {
         std::fs::write(&requirements, ambient)?;
         manager.check_thread_model_provider(&native).await?;
-        let retained = manager.load_retained_session_config(&native.config_layer_stack, &native.cwd).await?;
+        let retained = manager
+            .load_retained_session_config(&native.config_layer_stack, &native.cwd)
+            .await?;
         manager.check_thread_model_provider(&retained).await?;
         assert_eq!(retained, native);
     }

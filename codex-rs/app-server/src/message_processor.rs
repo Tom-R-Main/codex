@@ -1130,8 +1130,9 @@ impl MessageProcessor {
                 })
                 .await;
             }
-            ClientRequest::WorkerPolicyRead { params, .. } => self.thread_processor
-                .worker_policy_read(params).await,
+            ClientRequest::WorkerPolicyRead { params, .. } => {
+                self.thread_processor.worker_policy_read(params).await
+            }
             ClientRequest::ServerDiagnostics { .. } => Ok(Some(read_server_diagnostics().into())),
             ClientRequest::ConfigRead { params, .. } => self
                 .config_processor

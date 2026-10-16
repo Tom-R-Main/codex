@@ -97,7 +97,6 @@ mod app_server_tracing;
 mod attestation;
 mod auth_mode;
 mod bespoke_event_handling;
-mod sift_command_scope;
 mod code_mode_host;
 mod codex_home_metrics;
 mod command_exec;
@@ -132,6 +131,7 @@ mod plugin_config_reload;
 mod request_processors;
 mod request_serialization;
 mod server_request_error;
+mod sift_command_scope;
 mod skills_watcher;
 mod thread_state;
 mod thread_status;
@@ -541,15 +541,18 @@ pub async fn run_main_with_transport_options(
         Default::default(),
         arg0_paths.clone(),
         Arc::new(NoopThreadConfigLoader),
-    ).with_sealed_worker(sealed_worker);
+    )
+    .with_sealed_worker(sealed_worker);
     if !restricted_startup {
         let bootstrap_config = config_manager
             .load_startup_config(/*fallback_cwd*/ None)
             .await?;
-        let bootstrap_auth =
-            AuthManager::shared_from_config(&bootstrap_config, /*enable_codex_api_key_env*/ false)
-                .await
-                .map_err(std::io::Error::other)?;
+        let bootstrap_auth = AuthManager::shared_from_config(
+            &bootstrap_config,
+            /*enable_codex_api_key_env*/ false,
+        )
+        .await
+        .map_err(std::io::Error::other)?;
         config_manager.replace_cloud_config_bundle_loader(
             bootstrap_auth,
             bootstrap_config.chatgpt_base_url.clone(),
@@ -585,8 +588,10 @@ pub async fn run_main_with_transport_options(
     codex_core::validate_worker_config(&config)?;
     config.auth_config().validate()?;
     let auth_manager = if restricted_startup {
-        Arc::new(AuthManager::new_isolated_ephemeral(config.codex_home.to_path_buf(),
-            codex_login::AuthRouteConfig::from_http_client_factory(config.http_client_factory())))
+        Arc::new(AuthManager::new_isolated_ephemeral(
+            config.codex_home.to_path_buf(),
+            codex_login::AuthRouteConfig::from_http_client_factory(config.http_client_factory()),
+        ))
     } else {
         AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false)
             .await

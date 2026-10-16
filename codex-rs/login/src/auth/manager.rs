@@ -2192,20 +2192,29 @@ impl AuthManager {
     /// environment, keychain, auth store, PAT endpoint or external auth provider.
     /// Unlike Ephemeral storage mode alone, reload also remains discovery-free.
     pub fn new_isolated_ephemeral(codex_home: PathBuf, auth_route_config: AuthRouteConfig) -> Self {
-        Self::from_initial_auth(AuthConfig {
-            codex_home,
-            auth_credentials_store_mode: AuthCredentialsStoreMode::Ephemeral,
-            keyring_backend_kind: AuthKeyringBackendKind::default(),
-            forced_login_method: None,
-            chatgpt_base_url: None,
-            forced_chatgpt_workspace_id: None,
-            managed_auth_policy: ManagedAuthPolicy::default(),
-            auth_route_config,
-        }, false, None, true)
+        Self::from_initial_auth(
+            AuthConfig {
+                codex_home,
+                auth_credentials_store_mode: AuthCredentialsStoreMode::Ephemeral,
+                keyring_backend_kind: AuthKeyringBackendKind::default(),
+                forced_login_method: None,
+                chatgpt_base_url: None,
+                forced_chatgpt_workspace_id: None,
+                managed_auth_policy: ManagedAuthPolicy::default(),
+                auth_route_config,
+            },
+            false,
+            None,
+            true,
+        )
     }
 
-    fn from_initial_auth(auth_config: AuthConfig, enable_codex_api_key_env: bool,
-        managed_auth: Option<CodexAuth>, isolated_ephemeral: bool) -> Self {
+    fn from_initial_auth(
+        auth_config: AuthConfig,
+        enable_codex_api_key_env: bool,
+        managed_auth: Option<CodexAuth>,
+        isolated_ephemeral: bool,
+    ) -> Self {
         let AuthConfig {
             codex_home,
             auth_credentials_store_mode,
@@ -2216,7 +2225,9 @@ impl AuthManager {
             managed_auth_policy,
             auth_route_config,
         } = auth_config;
-        let agent_identity_authapi_base_url = if isolated_ephemeral { None } else {
+        let agent_identity_authapi_base_url = if isolated_ephemeral {
+            None
+        } else {
             agent_identity_authapi_base_url(chatgpt_base_url.as_deref()).ok()
         };
         let (auth_change_tx, _auth_change_rx) = watch::channel(0);
@@ -2603,7 +2614,9 @@ impl AuthManager {
     }
 
     async fn load_auth(&self) -> Option<CodexAuth> {
-        if self.isolated_ephemeral { return None; }
+        if self.isolated_ephemeral {
+            return None;
+        }
         if let Some(external_auth) = self.external_auth_provider() {
             let cached_auth = self.auth_cached();
             if cached_auth
