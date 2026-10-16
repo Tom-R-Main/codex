@@ -59,6 +59,13 @@ pub(crate) fn effective_config_projection(config: &Config) -> Result<serde_json:
             .map(|network| network.worker_policy_sha256())
             .transpose()
             .map_err(serde_json::Error::io)?;
+        let residency = config
+            .enforce_residency
+            .get()
+            .as_ref()
+            .map(|requirement| match requirement {
+                codex_config::ResidencyRequirement::Us => "us",
+            });
         Ok(EffectiveWorkerConfigV1 {
             domain: "codex-worker-loaded-config",
             schema_version: CONFIG_SCHEMA_VERSION,
@@ -72,7 +79,7 @@ pub(crate) fn effective_config_projection(config: &Config) -> Result<serde_json:
                 "reasoningEffort": config.model_reasoning_effort,
                 "planReasoningEffort": config.plan_mode_reasoning_effort,
                 "reasoningSummary": config.model_reasoning_summary, "verbosity": config.model_verbosity,
-                "catalog": config.model_catalog, "residency": config.enforce_residency.get(),
+                "catalog": config.model_catalog, "residency": residency,
                 "chatgptBaseUrl": config.chatgpt_base_url, "respectSystemProxy": config.respect_system_proxy,
                 "responsesMetadata": config.responses_api_metadata,
             }))?,

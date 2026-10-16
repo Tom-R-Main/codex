@@ -95,7 +95,7 @@ pub(crate) struct ToolSuggestCandidates {
 impl ToolRouter {
     pub(crate) fn record_worker_registry(
         &self,
-        session: &crate::session::Session,
+        session: &Session,
         model: &str,
         config: &crate::config::Config,
     ) -> Result<(), String> {

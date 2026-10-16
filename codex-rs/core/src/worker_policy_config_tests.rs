@@ -53,6 +53,9 @@ async fn actual_behavior_changes_bind_even_with_the_same_model_and_executor_name
     let original = effective_config_sha256(&config).unwrap();
     let mut variants = Vec::new();
     let mut changed = config.clone();
+    changed.enforce_residency = Constrained::allow_any(Some(codex_config::ResidencyRequirement::Us));
+    variants.push(changed);
+    let mut changed = config.clone();
     changed.model_provider.base_url = Some("http://127.0.0.1:9191/responses".to_string());
     variants.push(changed);
     let mut changed = config.clone();

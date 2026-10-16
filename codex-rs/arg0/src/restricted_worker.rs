@@ -1,7 +1,7 @@
 //! Fixed, image-owned Arg0 identity for private-bootstrap workers. No writable
 //! aliases or install-context/environment discovery participates in this path.
 use crate::Arg0DispatchPaths;
-#[cfg(unix)]
+#[cfg(all(unix, any(target_os = "linux", test)))]
 use std::path::Path;
 #[cfg(any(target_os = "linux", test))]
 use std::path::PathBuf;
@@ -56,7 +56,7 @@ fn fixed_paths() -> std::io::Result<Arg0DispatchPaths> {
     Err(refused())
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, any(target_os = "linux", test)))]
 fn check_entry(path: &Path, owner: u32, directory: bool) -> std::io::Result<()> {
     use std::os::unix::fs::MetadataExt;
     let metadata = std::fs::symlink_metadata(path).map_err(|_| refused())?;
@@ -73,7 +73,7 @@ fn check_entry(path: &Path, owner: u32, directory: bool) -> std::io::Result<()> 
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, any(target_os = "linux", test)))]
 fn check_alias(alias: &Path, provider: &Path, owner: u32) -> std::io::Result<()> {
     use std::os::unix::fs::MetadataExt;
     let metadata = std::fs::symlink_metadata(alias).map_err(|_| refused())?;
