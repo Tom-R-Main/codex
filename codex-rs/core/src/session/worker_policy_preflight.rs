@@ -1,4 +1,5 @@
 use super::session::Session;
+use codex_async_utils::OrCancelExt;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use std::collections::HashSet;
@@ -35,15 +36,19 @@ impl Session {
         let server = crate::worker_policy::preflight_server()
             .map_err(CodexErr::InvalidRequest)?;
         let _guard = PreparationGuard::acquire()?;
-        if self.active_turn.lock().await.is_some() {
+        // Serialize the entire speculative capture with every task reservation
+        // and registration. active_turn itself cannot be held across capture:
+        // capture reads it, and cleanup must remain free to retire live tasks.
+        let _admission = self.turn_admission.lock().or_cancel(cancellation_token).await?;
+        if self.active_turn.lock().or_cancel(cancellation_token).await?.is_some() {
             return Err(CodexErr::InvalidRequest("worker preparation requires an idle thread".to_owned()));
         }
         crate::worker_policy::invalidate_registry(&self.thread_id.to_string(), &self.worker_registry)
             .map_err(CodexErr::InvalidRequest)?;
         // Validate before context discovery as well as after its effective snapshot.
-        let config = self.get_config().await;
+        let config = self.get_config().or_cancel(cancellation_token).await?;
         crate::worker_policy::validate_worker_config(&config).map_err(CodexErr::Io)?;
-        let context = self.new_default_turn().await;
+        let context = self.new_default_turn().or_cancel(cancellation_token).await?;
         crate::worker_policy::validate_worker_config(&context.config)
             .map_err(CodexErr::Io)?;
         // Required MCP startup is the sealed launch transport, not a model-selected server.
@@ -60,4 +65,4 @@ impl Session {
 
 #[cfg(test)]
 #[path = "worker_policy_preflight_tests.rs"]
-mod tests;
+pub(super) mod tests;

@@ -228,6 +228,7 @@ async fn isolated_dispatch_child() {
     let config = bound_config(&home).await;
     initialize_worker_policy().unwrap();
     validate_worker_config(&config).unwrap();
+    crate::session::assert_restricted_preflight_serializes_turn_admission(&config).await;
     assert!(validate_worker_model("worker-model").is_ok());
     assert!(validate_worker_model("replacement-model").is_err());
     for method in ["command/exec", "thread/shellCommand", "mcpServer/tool/call", "fs/writeFile",

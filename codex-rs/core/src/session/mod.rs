@@ -263,6 +263,8 @@ pub(crate) mod turn_context;
 mod turn_input;
 mod turn_suspension;
 mod worker_policy_preflight;
+#[cfg(test)]
+pub(crate) use worker_policy_preflight::tests::assert_restricted_preflight_serializes_turn_admission;
 mod world_state;
 use self::code_mode_warning::unsupported_code_mode_warning;
 pub(crate) use self::environment::ThreadEnvironmentDefaults;

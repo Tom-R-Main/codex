@@ -432,6 +432,7 @@ async fn start_if_idle(
     }
 
     let turn_state = {
+        let _admission = session.turn_admission.lock().await;
         let mut active_turn = session.active_turn.lock().await;
         if active_turn.is_some() {
             return Ok(TurnInputSubmission::NotSubmitted {

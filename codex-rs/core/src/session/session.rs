@@ -88,6 +88,9 @@ pub(crate) struct Session {
     pub(super) mcp_prewarm_task: std::sync::Mutex<Option<JoinHandle<()>>>,
     pub(crate) conversation: Arc<RealtimeConversationManager>,
     pub(crate) realtime_history: Option<Mutex<crate::realtime_history::RealtimeHistoryState>>,
+    // Lock before active_turn when reserving/registering a task. Preflight holds
+    // this across discovery, but never holds active_turn or state across it.
+    pub(crate) turn_admission: Mutex<()>,
     pub(crate) active_turn: Mutex<Option<ActiveTurn>>,
     pub(crate) async_hook_results: async_channel::Receiver<HookCompletedEvent>,
     pub(crate) input_queue: InputQueue,
@@ -1773,6 +1776,7 @@ impl Session {
                 realtime_history: (session_configuration.history_mode == ThreadHistoryMode::Paginated
                     && services.live_thread.is_some())
                 .then(|| Mutex::new(Default::default())),
+                turn_admission: Mutex::new(()),
                 active_turn: Mutex::new(None),
                 async_hook_results,
                 input_queue: InputQueue::new(),
