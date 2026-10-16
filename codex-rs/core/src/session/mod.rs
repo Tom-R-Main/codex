@@ -1880,6 +1880,17 @@ impl Session {
         updates: SessionSettingsUpdate,
         should_commit: impl FnOnce(&SessionConfiguration, &SessionConfiguration) -> bool + Send,
     ) -> ConstraintResult<Option<SessionSettingsCommit>> {
+        if !crate::worker_policy::settings_update_allowed(&updates) {
+            // Deny before applying settings, model resolution or state publication.
+            // Poisoned registry reads/metadata already fail closed.
+            let _ = crate::worker_policy::invalidate_registry(&self.thread_id.to_string());
+            return Err(crate::config::ConstraintError::InvalidValue {
+                field_name: "restricted_worker_configuration",
+                candidate: "thread settings override".to_string(),
+                allowed: "immutable controller launch configuration".to_string(),
+                requirement_source: codex_config::RequirementSource::Unknown,
+            });
+        }
         let notify_config_contributors = !self.services.extensions.config_contributors().is_empty();
         let (commit, previous_config, new_config, permission_profile_changed, mcp_inputs_changed) = {
             let mut state = self.state.lock().await;
@@ -1894,6 +1905,14 @@ impl Session {
 
             if !should_commit(&state.session_configuration, &updated) {
                 return Ok(None);
+            }
+
+            if crate::worker_policy::worker_is_restricted() {
+                // Revoke the old executable evidence before publishing accepted
+                // settings or starting their proxy/MCP refresh. A poisoned map
+                // already denies both readback and executor metadata, so its
+                // error cannot leave usable stale authority behind.
+                let _ = crate::worker_policy::invalidate_registry(&self.thread_id.to_string());
             }
 
             let previous_config = notify_config_contributors
@@ -2058,6 +2077,11 @@ impl Session {
     }
 
     async fn refresh_runtime_config_inner(&self, next_config: Config, refresh_recording: bool) {
+        if crate::worker_policy::worker_is_restricted() {
+            // A protected process must be relaunched to change its configuration;
+            // do not race an already-preparing router with ambient file refresh.
+            return;
+        }
         // Refresh only the user layer from the incoming snapshot. Preserve thread-local
         // layers such as request/session overrides that were present when this session
         // was created.
@@ -2146,6 +2170,7 @@ impl Session {
     }
 
     pub(crate) async fn refresh_mcp_config(&self, next_config: Config) {
+        if crate::worker_policy::worker_is_restricted() { return; }
         let mut state = self.state.lock().await;
         let mut config = (*state.session_configuration.original_config_do_not_use).clone();
         config.config_layer_stack = next_config
@@ -3787,6 +3812,16 @@ impl Session {
         required_servers: &[String],
         required_plugins: &HashSet<String>,
     ) -> CodexResult<Arc<StepContext>> {
+        if crate::worker_policy::worker_is_restricted() {
+            // A failed new snapshot must not re-challenge an older successful
+            // router or authorize metadata against that stale registry.
+            crate::worker_policy::invalidate_registry(&self.thread_id.to_string())
+                .map_err(CodexErr::InvalidRequest)?;
+        }
+        // Reject context overrides before instruction reads, capability discovery
+        // or MCP startup, including the no-inference workerPolicy/read preflight.
+        crate::worker_policy::validate_worker_config(&turn_context.config)
+            .map_err(CodexErr::Io)?;
         // Read the step's model and record its environments together so an update cannot split them.
         // Wait for executor startup below, after releasing the lock.
         let (mut settings, environments) = {
@@ -3818,6 +3853,8 @@ impl Session {
                 settings = Arc::new(inherited_settings);
             }
         }
+        crate::worker_policy::validate_worker_model(&settings.model_info.slug)
+            .map_err(CodexErr::Io)?;
         let token_budget = token_budget::resolve_token_budget(
             turn_context.configured_token_budget.as_ref(),
             turn_context.use_model_token_budget_defaults,

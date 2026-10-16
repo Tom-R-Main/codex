@@ -33,6 +33,8 @@ struct WorkerPolicy {
     raw_tool: String,
     endpoint: String,
     server_config_sha256: String,
+    config_schema_version: String,
+    config_sha256: String,
     model: String,
     model_provider_id: String,
     model_provider_sha256: String,
@@ -47,11 +49,12 @@ fn parse_launch(marker: Option<&str>, json: Option<&str>) -> Result<Option<Worke
             let endpoint = url::Url::parse(&policy.endpoint)
                 .map_err(|_| "invalid worker endpoint".to_string())?;
             if policy.version != 1
+                || policy.config_schema_version != crate::worker_policy_config::CONFIG_SCHEMA_VERSION
                 || policy.executor_protocol_version != "sift-worker-executor-v1"
                 || [&policy.launch_id, &policy.incarnation_id, &policy.server, &policy.namespace, &policy.tool, &policy.raw_tool, &policy.model, &policy.model_provider_id]
                     .into_iter().any(|s| s.is_empty() || s.len() > 256 || s.chars().any(char::is_control))
                 || policy.namespace == codex_protocol::DEFAULT_FUNCTION_NAMESPACE
-                || [&policy.binding_sha256, &policy.server_config_sha256, &policy.model_provider_sha256].into_iter().any(|value| value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()))
+                || [&policy.binding_sha256, &policy.server_config_sha256, &policy.model_provider_sha256, &policy.config_sha256].into_iter().any(|value| value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()))
                 || !matches!(endpoint.scheme(), "http" | "https")
                 || !endpoint.username().is_empty() || endpoint.password().is_some()
                 || endpoint.query().is_some() || endpoint.fragment().is_some()
@@ -88,20 +91,40 @@ pub fn initialize_worker_policy() -> std::io::Result<()> {
 pub fn validate_worker_config(config: &crate::config::Config) -> std::io::Result<()> {
     initialize_worker_policy()?;
     let Ok(Some(policy)) = launch() else { return Ok(()); };
-    let features = [codex_features::Feature::Plugins, codex_features::Feature::Apps,
-        codex_features::Feature::CodexHooks, codex_features::Feature::CodeMode,
-        codex_features::Feature::CodeModeOnly, codex_features::Feature::CodeModePrewarm, codex_features::Feature::CodeModeHost,
-        codex_features::Feature::ShellSnapshot, codex_features::Feature::ShellSnapshotV2];
-    if config.notify.is_some() || features.into_iter().any(|feature| config.features.enabled(feature))
-        || config.model.as_deref() != Some(policy.model.as_str())
-        || !policy.provider_matches(&config.model_provider_id, &config.model_provider)
-        || config.mcp_servers.get().len() != 1
-        || !config.mcp_servers.get().get(&policy.server).is_some_and(|server| policy.server_matches(&policy.server, server))
+    policy.validate_config(config)
+}
+
+pub(crate) fn validate_worker_model(model: &str) -> std::io::Result<()> {
+    initialize_worker_policy()?;
+    if let Ok(Some(policy)) = launch()
+        && model != policy.model
     {
         return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,
-            "worker configuration violates protected launch policy"));
+            "worker effective model violates protected launch policy"));
     }
     Ok(())
+}
+
+impl WorkerPolicy {
+    fn validate_config(&self, config: &crate::config::Config) -> std::io::Result<()> {
+        let policy = self;
+        let features = [codex_features::Feature::Plugins, codex_features::Feature::Apps,
+            codex_features::Feature::CodexHooks, codex_features::Feature::CodeMode,
+            codex_features::Feature::CodeModeOnly, codex_features::Feature::CodeModePrewarm, codex_features::Feature::CodeModeHost,
+            codex_features::Feature::ShellSnapshot, codex_features::Feature::ShellSnapshotV2];
+        if config.notify.is_some() || features.into_iter().any(|feature| config.features.enabled(feature))
+            || config.model.as_deref() != Some(policy.model.as_str())
+            || !policy.provider_matches(&config.model_provider_id, &config.model_provider)
+            || config.mcp_servers.get().len() != 1
+            || !config.mcp_servers.get().get(&policy.server).is_some_and(|server| policy.server_matches(&policy.server, server))
+            || crate::worker_policy_config::effective_config_sha256(config)
+                .map_err(std::io::Error::other)? != policy.config_sha256
+        {
+            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,
+                "worker configuration violates protected launch policy"));
+        }
+        Ok(())
+    }
 }
 
 /// Whether a process-wide ceiling forbids ordinary host effects.
@@ -133,7 +156,13 @@ pub fn worker_request_allowed(request: &codex_app_server_protocol::ClientRequest
         codex_app_server_protocol::ClientRequest::TurnStart { params, .. } =>
             text_only(&params.input) && params.tool_output.is_none() && params.additional_context.is_none()
             && params.environments.is_none() && params.runtime_workspace_roots.is_none()
-            && params.cwd.is_none() && params.model.is_none() && params.collaboration_mode.is_none(),
+            && params.cwd.is_none() && params.model.is_none() && params.collaboration_mode.is_none()
+            && params.approval_policy.is_none() && params.approvals_reviewer.is_none()
+            && params.sandbox_policy.is_none() && params.permissions.is_none()
+            && params.service_tier.is_none() && params.service_tier_for_turn.is_none()
+            && params.effort.is_none() && params.summary.is_none() && params.personality.is_none()
+            && params.disabled_plugin_ids.is_none() && params.output_schema.is_none()
+            && params.cyber_access_program.is_none() && params.multi_agent_mode.is_none(),
         codex_app_server_protocol::ClientRequest::TurnSteer { params, .. } =>
             text_only(&params.input) && params.additional_context.is_none(),
         codex_app_server_protocol::ClientRequest::ThreadStart { params, .. } =>
@@ -146,7 +175,29 @@ pub fn worker_request_allowed(request: &codex_app_server_protocol::ClientRequest
     }
 }
 
-fn digest(value: &impl Serialize) -> Result<String, serde_json::Error> {
+/// The restricted worker's launch configuration is immutable for its lifetime.
+/// Exhaustive patterns make future settings additions require an explicit choice.
+pub(crate) fn settings_update_allowed(updates: &crate::session::SessionSettingsUpdate) -> bool {
+    if !restricted() { return true; }
+    let crate::session::SessionSettingsUpdate {
+        step_settings, environments, runtime_workspace_roots, profile_workspace_roots,
+        sandbox_policy, permission_profile, active_permission_profile, windows_sandbox_level,
+        service_tier_for_turn, disabled_plugin_ids,
+        app_server_client_name: _, app_server_client_version: _,
+    } = updates;
+    let crate::session::step_settings::StepSettingsUpdate {
+        model, effort, collaboration_mode, reasoning_summary, service_tier,
+        personality, approval_policy, approvals_reviewer,
+    } = step_settings;
+    model.is_none() && effort.is_none() && collaboration_mode.is_none()
+        && reasoning_summary.is_none() && service_tier.is_none() && personality.is_none()
+        && approval_policy.is_none() && approvals_reviewer.is_none()
+        && environments.is_none() && runtime_workspace_roots.is_none() && profile_workspace_roots.is_none()
+        && sandbox_policy.is_none() && permission_profile.is_none() && active_permission_profile.is_none()
+        && windows_sandbox_level.is_none() && service_tier_for_turn.is_none() && disabled_plugin_ids.is_none()
+}
+
+pub(crate) fn digest(value: &impl Serialize) -> Result<String, serde_json::Error> {
     fn canonical(value: serde_json::Value) -> serde_json::Value {
         match value {
             serde_json::Value::Object(object) => serde_json::Value::Object(
@@ -215,9 +266,12 @@ pub(crate) fn prepared_call_allowed(call: &codex_mcp::PreparedMcpCall) -> bool {
     }
 }
 
-pub(crate) fn record_registry(thread: String, model: &str, inventory: Vec<(ToolName, Option<String>)>) -> Result<(), String> {
+pub(crate) fn record_registry(thread: String, model: &str, config: &crate::config::Config, inventory: Vec<(ToolName, Option<String>)>) -> Result<(), String> {
     let Ok(Some(policy)) = launch() else { return Ok(()); };
-    if model != policy.model || inventory.len() != 1 || inventory.iter().any(|(name, server)| !policy.allows(name, server.as_deref())) {
+    invalidate_registry(&thread)?;
+    policy.validate_config(config).map_err(|_| "worker effective configuration violates launch policy")?;
+    validate_worker_model(model).map_err(|_| "worker effective model violates launch policy")?;
+    if inventory.len() != 1 || inventory.iter().any(|(name, server)| !policy.allows(name, server.as_deref())) {
         return Err("worker registry or model violates launch policy".to_string());
     }
     let mut inventory = inventory.into_iter().map(|(name, server)| {
@@ -233,10 +287,12 @@ pub(crate) fn record_registry(thread: String, model: &str, inventory: Vec<(ToolN
         "buildRevision": option_env!("CODEX_BUILD_SOURCE_REVISION"),
         "policySha256": digest(policy).map_err(|_| "policy digest failed")?,
         "registrySha256": digest(&inventory).map_err(|_| "registry digest failed")?,
-        "serverConfigSha256": policy.server_config_sha256, "configSha256": null, "model": model,
+        "serverConfigSha256": policy.server_config_sha256,
+        "configSchemaVersion": crate::worker_policy_config::CONFIG_SCHEMA_VERSION,
+        "configSha256": crate::worker_policy_config::effective_config_sha256(config)?, "model": model,
         "modelProviderSha256": policy.model_provider_sha256, "modelProviderId": policy.model_provider_id,
         "executableRegistry": inventory,
-        "remaining": ["trusted-image-build-binding", "complete-config-binding", "alternate-effect-qualification", "controller-handshake"]
+        "remaining": ["trusted-image-build-binding", "external-state-config-binding", "alternate-effect-qualification", "controller-handshake"]
     });
     let mut registries = REGISTRIES.lock().map_err(|_| "worker registry state unavailable")?;
     if !registries.contains_key(&thread) && registries.len() >= 64 {
