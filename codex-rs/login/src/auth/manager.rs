@@ -2185,7 +2185,12 @@ impl AuthManager {
             .await
             .ok()
             .flatten();
-        Self::from_initial_auth(auth_config, enable_codex_api_key_env, managed_auth, false)
+        Self::from_initial_auth(
+            auth_config,
+            enable_codex_api_key_env,
+            managed_auth,
+            /*isolated_ephemeral*/ false,
+        )
     }
 
     /// Creates an unauthenticated process-local manager without consulting any
@@ -2203,9 +2208,9 @@ impl AuthManager {
                 managed_auth_policy: ManagedAuthPolicy::default(),
                 auth_route_config,
             },
-            false,
-            None,
-            true,
+            /*enable_codex_api_key_env*/ false,
+            /*managed_auth*/ None,
+            /*isolated_ephemeral*/ true,
         )
     }
 
