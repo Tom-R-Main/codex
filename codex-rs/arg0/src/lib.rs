@@ -1,3 +1,5 @@
+mod restricted_worker;
+
 use std::ffi::OsString;
 use std::fs::File;
 use std::future::Future;
@@ -58,6 +60,9 @@ impl Arg0PathEntryGuard {
 }
 
 pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
+    // Restricted entry never dispatches an argv-selected helper, reads dotenv,
+    // creates writable aliases, or changes PATH before private bootstrap.
+    if restricted_worker::requested() { return None; }
     // Determine if we were invoked via the special alias.
     let mut args = std::env::args_os();
     let argv0 = args.next().unwrap_or_default();
@@ -227,7 +232,10 @@ where
     // Retain the TempDir so it exists for the lifetime of the invocation of
     // this executable. Admittedly, we could invoke `keep()` on it, but it
     // would be nice to avoid leaving temporary directories behind, if possible.
-    let path_entry_guard = arg0_dispatch();
+    let restricted_paths = if restricted_worker::requested() {
+        Some(restricted_worker::paths()?)
+    } else { None };
+    let path_entry_guard = if restricted_paths.is_some() { None } else { arg0_dispatch() };
     let current_exe = std::env::current_exe().ok();
 
     // Regular invocation. Run the async entry point on a thread with the same
@@ -238,11 +246,12 @@ where
         .stack_size(THREAD_STACK_SIZE_BYTES)
         .spawn(move || {
             let runtime = build_runtime()?;
-            runtime.block_on(run_main_with_arg0_guard(
-                path_entry_guard,
-                current_exe,
-                main_fn,
-            ))
+            match restricted_paths {
+                Some(paths) => runtime.block_on(main_fn(paths)),
+                None => runtime.block_on(run_main_with_arg0_guard(
+                    path_entry_guard, current_exe, main_fn,
+                )),
+            }
         })?;
     match handle.join() {
         Ok(result) => result,

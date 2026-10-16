@@ -34,6 +34,11 @@ struct EffectiveWorkerConfigV1 {
 /// environment variables here. Neither raw sections nor serialization errors are
 /// exposed in the attestation, logs or error messages.
 pub(crate) fn effective_config_sha256(config: &Config) -> Result<String, String> {
+    effective_config_projection(config).and_then(|projection| digest(&projection)
+        .map_err(|_| "worker effective configuration cannot be bound".to_string()))
+}
+
+pub(crate) fn effective_config_projection(config: &Config) -> Result<serde_json::Value, String> {
     if config.rollout_budget.as_ref().is_some_and(|budget| {
         !budget.sampling_token_weight.is_finite() || !budget.prefill_token_weight.is_finite()
     }) {
@@ -119,7 +124,7 @@ pub(crate) fn effective_config_sha256(config: &Config) -> Result<String, String>
             }))?,
             execution_sha256: digest(&json!({
                 "cwd": config.cwd, "workspaceRootsExplicit": config.workspace_roots_explicit,
-                "codexHome": config.codex_home, "logDir": config.log_dir,
+                "codexHome": config.codex_home, "sqliteHome": config.sqlite.home(), "logDir": config.log_dir,
                 "selfExe": config.codex_self_exe, "linuxSandboxExe": config.codex_linux_sandbox_exe,
                 "execveWrapper": config.main_execve_wrapper_exe, "zsh": config.zsh_path,
                 "notify": config.notify, "bypassHookTrust": config.bypass_hook_trust,
@@ -133,7 +138,7 @@ pub(crate) fn effective_config_sha256(config: &Config) -> Result<String, String>
             }))?,
         })
     };
-    project().and_then(|projection| digest(&projection))
+    project().and_then(serde_json::to_value)
         .map_err(|_| "worker effective configuration cannot be bound".to_string())
 }
 

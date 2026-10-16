@@ -2058,6 +2058,8 @@ pub struct AuthManager {
     agent_identity_bootstrap_cooldown: Mutex<AgentIdentityBootstrapCooldown>,
     external_auth: RwLock<Option<Arc<dyn ExternalAuth>>>,
     workload_identity_selected: bool,
+    /// This manager has no credential source, including on explicit reload.
+    isolated_ephemeral: bool,
     auth_route_config: AuthRouteConfig,
 }
 
@@ -2183,6 +2185,27 @@ impl AuthManager {
             .await
             .ok()
             .flatten();
+        Self::from_initial_auth(auth_config, enable_codex_api_key_env, managed_auth, false)
+    }
+
+    /// Creates an unauthenticated process-local manager without consulting any
+    /// environment, keychain, auth store, PAT endpoint or external auth provider.
+    /// Unlike Ephemeral storage mode alone, reload also remains discovery-free.
+    pub fn new_isolated_ephemeral(codex_home: PathBuf, auth_route_config: AuthRouteConfig) -> Self {
+        Self::from_initial_auth(AuthConfig {
+            codex_home,
+            auth_credentials_store_mode: AuthCredentialsStoreMode::Ephemeral,
+            keyring_backend_kind: AuthKeyringBackendKind::default(),
+            forced_login_method: None,
+            chatgpt_base_url: None,
+            forced_chatgpt_workspace_id: None,
+            managed_auth_policy: ManagedAuthPolicy::default(),
+            auth_route_config,
+        }, false, None, true)
+    }
+
+    fn from_initial_auth(auth_config: AuthConfig, enable_codex_api_key_env: bool,
+        managed_auth: Option<CodexAuth>, isolated_ephemeral: bool) -> Self {
         let AuthConfig {
             codex_home,
             auth_credentials_store_mode,
@@ -2193,8 +2216,9 @@ impl AuthManager {
             managed_auth_policy,
             auth_route_config,
         } = auth_config;
-        let agent_identity_authapi_base_url =
-            agent_identity_authapi_base_url(chatgpt_base_url.as_deref()).ok();
+        let agent_identity_authapi_base_url = if isolated_ephemeral { None } else {
+            agent_identity_authapi_base_url(chatgpt_base_url.as_deref()).ok()
+        };
         let (auth_change_tx, _auth_change_rx) = watch::channel(0);
         Self {
             codex_home,
@@ -2218,6 +2242,7 @@ impl AuthManager {
             agent_identity_bootstrap_cooldown: Mutex::default(),
             external_auth: RwLock::new(None),
             workload_identity_selected: false,
+            isolated_ephemeral,
             auth_route_config,
         }
     }
@@ -2254,6 +2279,7 @@ impl AuthManager {
             agent_identity_bootstrap_cooldown: Mutex::default(),
             external_auth: RwLock::new(None),
             workload_identity_selected: false,
+            isolated_ephemeral: false,
             auth_route_config: crate::test_support::transport_default_auth_route_config(),
         })
     }
@@ -2284,6 +2310,7 @@ impl AuthManager {
             agent_identity_bootstrap_cooldown: Mutex::default(),
             external_auth: RwLock::new(None),
             workload_identity_selected: false,
+            isolated_ephemeral: false,
             auth_route_config: crate::test_support::transport_default_auth_route_config(),
         })
     }
@@ -2322,6 +2349,7 @@ impl AuthManager {
             agent_identity_bootstrap_cooldown: Mutex::default(),
             external_auth: RwLock::new(None),
             workload_identity_selected: false,
+            isolated_ephemeral: false,
             auth_route_config: crate::test_support::transport_default_auth_route_config(),
         })
     }
@@ -2350,6 +2378,7 @@ impl AuthManager {
             agent_identity_bootstrap_cooldown: Mutex::default(),
             external_auth: RwLock::new(Some(Arc::new(BearerTokenRefresher::new(config)))),
             workload_identity_selected: false,
+            isolated_ephemeral: false,
             // External bearer auth refreshes by running the provider's command and never makes
             // auth-owned HTTP requests, so this route is intentionally inert.
             auth_route_config: AuthRouteConfig::from_http_client_factory(HttpClientFactory::new(
@@ -2574,6 +2603,7 @@ impl AuthManager {
     }
 
     async fn load_auth(&self) -> Option<CodexAuth> {
+        if self.isolated_ephemeral { return None; }
         if let Some(external_auth) = self.external_auth_provider() {
             let cached_auth = self.auth_cached();
             if cached_auth
@@ -3133,3 +3163,7 @@ mod change_state_tests;
 #[cfg(test)]
 #[path = "account_user_id_tests.rs"]
 mod account_user_id_tests;
+
+#[cfg(test)]
+#[path = "isolated_ephemeral_tests.rs"]
+mod isolated_ephemeral_tests;

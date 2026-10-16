@@ -87,6 +87,14 @@ pub fn initialize_worker_policy() -> std::io::Result<()> {
     })
 }
 
+/// Bind the private bootstrap to the already-captured immutable process launch.
+pub fn validate_worker_bootstrap_identity(request: &serde_json::Value) -> std::io::Result<()> {
+    initialize_worker_policy()?;
+    let Ok(Some(policy)) = launch() else { return Err(crate::worker_launch_config::worker_materialization_error()); };
+    if policy.bootstrap_matches(request) { Ok(()) }
+    else { Err(crate::worker_launch_config::worker_materialization_error()) }
+}
+
 /// Validate before session startup side effects, and again for every resumed thread.
 pub fn validate_worker_config(config: &crate::config::Config) -> std::io::Result<()> {
     initialize_worker_policy()?;
@@ -106,6 +114,16 @@ pub(crate) fn validate_worker_model(model: &str) -> std::io::Result<()> {
 }
 
 impl WorkerPolicy {
+    fn bootstrap_matches(&self, request: &serde_json::Value) -> bool {
+        let input = &request["input"];
+        input["launchId"].as_str() == Some(self.launch_id.as_str())
+            && input["incarnationId"].as_str() == Some(self.incarnation_id.as_str())
+            && input["bindingSha256"].as_str() == Some(self.binding_sha256.as_str())
+            && input["endpoint"].as_str() == Some(self.endpoint.as_str())
+            && request["configSha256"].as_str() == Some(self.config_sha256.as_str())
+            && request["template"]["server"].as_str() == Some(self.server.as_str())
+    }
+
     fn validate_config(&self, config: &crate::config::Config) -> std::io::Result<()> {
         let policy = self;
         let features = [codex_features::Feature::Plugins, codex_features::Feature::Apps,

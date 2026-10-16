@@ -3936,9 +3936,8 @@ impl ThreadRequestProcessor {
                 return Ok(ControlFlow::Continue(()));
             }
         };
-        if clear_reasoning_effort {
-            config.model_reasoning_effort = None;
-        }
+        config = self.config_manager.finalize_resume_config(config, clear_reasoning_effort)
+            .map_err(|err| config_load_error(&err))?;
 
         let response_history = thread_history.clone();
 
@@ -6330,3 +6329,7 @@ fn build_thread_from_loaded_snapshot(
 #[cfg(test)]
 #[path = "thread_processor_tests.rs"]
 mod thread_processor_tests;
+
+#[cfg(test)]
+#[path = "worker_resume_tests.rs"]
+mod worker_resume_tests;

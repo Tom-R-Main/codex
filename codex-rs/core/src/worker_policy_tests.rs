@@ -20,6 +20,23 @@ fn policy() -> WorkerPolicy {
 }
 
 #[test]
+fn private_bootstrap_cannot_cross_a_launch_incarnation_or_binding() {
+    let policy = policy();
+    let request = json!({"input":{"launchId":policy.launch_id,"incarnationId":policy.incarnation_id,
+        "bindingSha256":policy.binding_sha256,"endpoint":policy.endpoint},
+        "configSha256":policy.config_sha256,"template":{"server":policy.server}});
+    assert!(policy.bootstrap_matches(&request));
+    for field in ["launchId", "incarnationId", "bindingSha256", "endpoint"] {
+        let mut changed = request.clone();
+        changed["input"][field] = json!("different");
+        assert!(!policy.bootstrap_matches(&changed));
+    }
+    let mut changed = request;
+    changed["configSha256"] = json!("0".repeat(64));
+    assert!(!policy.bootstrap_matches(&changed));
+}
+
+#[test]
 fn restricted_launch_rejects_missing_or_unsupported_policy() {
     let valid = policy_json().to_string();
     assert!(parse_launch(None, None).unwrap().is_none());

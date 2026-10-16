@@ -78,7 +78,10 @@ pub use agent_message_board::install_agent_message_board;
 mod attestation;
 mod worker_policy;
 mod worker_policy_config;
-pub use worker_policy::{initialize_worker_policy, read_worker_policy, worker_rpc_allowed, worker_request_allowed, worker_is_restricted, validate_worker_config};
+mod worker_launch_config;
+pub use worker_launch_config::{WorkerLaunchMaterialization, WorkerRuntimePaths, WORKER_MATERIALIZATION_MAX_BYTES,
+    materialize_worker_launch, project_worker_launch, worker_materialization_error, worker_request_runtime};
+pub use worker_policy::{initialize_worker_policy, read_worker_policy, worker_rpc_allowed, worker_request_allowed, worker_is_restricted, validate_worker_config, validate_worker_bootstrap_identity};
 mod codex_delegate;
 mod command_canonicalization;
 pub mod config;
