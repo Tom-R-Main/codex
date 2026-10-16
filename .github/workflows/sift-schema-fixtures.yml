@@ -4,7 +4,7 @@ name: Sift protocol schema artifacts
 # the default branch before it exists there. Review this source before pushing.
 on:
   push:
-    branches: [codex/worker-policy]
+    branches: [codex/worker-policy, codex/worker-policy-schema]
     paths:
       - .github/workflows/sift-schema-fixtures.yml
       - codex-rs/app-server-protocol/**
@@ -29,10 +29,14 @@ jobs:
       CARGO_BUILD_JOBS: '2'
       CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
       SOURCE_SHA: ${{ github.sha }}
-      CARGO_TARGET_DIR: ${{ runner.temp }}/sift-schema-target
-      SCHEMA_OUTPUT: ${{ runner.temp }}/sift-schema-output
-      ARTIFACT_OUTPUT: ${{ runner.temp }}/sift-schema-artifact
     steps:
+      - name: Initialize temporary paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'CARGO_TARGET_DIR=%s/sift-schema-target\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'SCHEMA_OUTPUT=%s/sift-schema-output\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'ARTIFACT_OUTPUT=%s/sift-schema-artifact\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.sha }}
