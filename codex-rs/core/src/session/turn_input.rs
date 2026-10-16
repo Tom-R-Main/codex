@@ -212,7 +212,9 @@ pub(super) async fn handle(
         let safe = matches!(&request.input, SubmittedTurnInput::UserInput { content, .. }
             if crate::worker_policy::text_input_only(content));
         if !safe || !request.additional_context.is_empty() {
-            return Err(CodexErr::InvalidRequest("restricted workers accept text input only".to_string()));
+            return Err(CodexErr::InvalidRequest(
+                "restricted workers accept text input only".to_string(),
+            ));
         }
     }
     match mode {

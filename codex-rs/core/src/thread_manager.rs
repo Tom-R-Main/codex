@@ -1309,7 +1309,9 @@ impl ThreadManager {
             ));
         }
         let removed = threads.remove(thread_id);
-        if let Some(thread) = &removed { thread.session.worker_registry.retire(); }
+        if let Some(thread) = &removed {
+            thread.session.worker_registry.retire();
+        }
         Ok(removed)
     }
 
@@ -1328,7 +1330,9 @@ impl ThreadManager {
             .is_some_and(|thread| Arc::ptr_eq(thread, expected))
         {
             let removed = threads.remove(thread_id);
-            if let Some(thread) = &removed { thread.session.worker_registry.retire(); }
+            if let Some(thread) = &removed {
+                thread.session.worker_registry.retire();
+            }
             removed
         } else {
             None
@@ -1368,7 +1372,7 @@ impl ThreadManager {
                     thread.session.worker_registry.retire();
                     completed_runtimes.push((thread_id, thread));
                     report.completed.push(thread_id);
-                },
+                }
                 ShutdownOutcome::SubmitFailed => report.submit_failed.push(thread_id),
                 ShutdownOutcome::TimedOut => report.timed_out.push(thread_id),
             }
@@ -1376,7 +1380,10 @@ impl ThreadManager {
 
         let mut tracked_threads = self.state.threads.write().await;
         for (thread_id, expected) in completed_runtimes {
-            if tracked_threads.get(&thread_id).is_some_and(|thread| Arc::ptr_eq(thread, &expected)) {
+            if tracked_threads
+                .get(&thread_id)
+                .is_some_and(|thread| Arc::ptr_eq(thread, &expected))
+            {
                 tracked_threads.remove(&thread_id);
             }
         }
@@ -1711,7 +1718,9 @@ impl ThreadManagerState {
         let removed = threads.remove(thread_id);
         // Keep map -> registry ordering through retirement; a replacement must
         // not publish while the removed runtime can still publish its registry.
-        if let Some(thread) = &removed { thread.session.worker_registry.retire(); }
+        if let Some(thread) = &removed {
+            thread.session.worker_registry.retire();
+        }
         removed
     }
 

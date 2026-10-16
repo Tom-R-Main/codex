@@ -184,8 +184,11 @@ impl SessionStartupPrewarmHandle {
 
 impl Session {
     pub(crate) async fn schedule_startup_prewarm(self: &Arc<Self>, base_instructions: String) {
-        if crate::worker_policy::restricted() { return; }
-        if !crate::worker_policy::restricted() && self.features().enabled(Feature::CodeModePrewarm)
+        if crate::worker_policy::restricted() {
+            return;
+        }
+        if !crate::worker_policy::restricted()
+            && self.features().enabled(Feature::CodeModePrewarm)
             && self.services.code_mode_service.is_available()
         {
             let session = Arc::clone(self);

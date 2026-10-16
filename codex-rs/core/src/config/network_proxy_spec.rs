@@ -96,8 +96,10 @@ impl NetworkProxySpec {
         if self.config.credential_broker_context != Default::default()
             || self.base_config.credential_broker_context != Default::default()
         {
-            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,
-                "worker proxy context cannot be bound"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "worker proxy context cannot be bound",
+            ));
         }
         let constraints = &self.constraints;
         crate::worker_policy::digest(&serde_json::json!({
@@ -123,7 +125,8 @@ impl NetworkProxySpec {
                 "unixSockets": constraints.allow_unix_sockets,
                 "localBinding": constraints.allow_local_binding,
             },
-        })).map_err(|_| std::io::Error::other("worker proxy digest failed"))
+        }))
+        .map_err(|_| std::io::Error::other("worker proxy digest failed"))
     }
 
     pub(crate) fn enabled(&self) -> bool {

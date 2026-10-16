@@ -1019,14 +1019,19 @@ impl CodexThread {
     pub async fn prepare_worker_policy(&self, challenge: &str) -> CodexResult<serde_json::Value> {
         let thread = self.session.thread_id.to_string();
         if !crate::worker_policy::valid_read_request(&thread, challenge) {
-            return Err(CodexErr::InvalidRequest("invalid worker attestation challenge".to_owned()));
+            return Err(CodexErr::InvalidRequest(
+                "invalid worker attestation challenge".to_owned(),
+            ));
         }
         let cancellation = CancellationToken::new();
         let _cancel_on_drop = cancellation.clone().drop_guard();
         tokio::time::timeout(
             std::time::Duration::from_secs(15),
-            self.session.prepare_restricted_worker_registry(&cancellation),
-        ).await.map_err(|_| CodexErr::InvalidRequest("worker preparation timed out".to_owned()))??;
+            self.session
+                .prepare_restricted_worker_registry(&cancellation),
+        )
+        .await
+        .map_err(|_| CodexErr::InvalidRequest("worker preparation timed out".to_owned()))??;
         Ok(crate::worker_policy::read_worker_policy(&thread, challenge))
     }
 

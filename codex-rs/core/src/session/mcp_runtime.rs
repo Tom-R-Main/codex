@@ -336,7 +336,8 @@ impl Session {
             .environment_cwds
             .entry(codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string())
             .or_insert_with(|| PathUri::from_abs_path(&desired.config.cwd));
-        config.mcp_server_catalog = crate::worker_policy::restrict_catalog(&config.mcp_server_catalog);
+        config.mcp_server_catalog =
+            crate::worker_policy::restrict_catalog(&config.mcp_server_catalog);
         let mcp_servers = effective_mcp_servers(&config, auth.as_ref());
         config.set_server_permission_profiles(
             &mcp_servers,

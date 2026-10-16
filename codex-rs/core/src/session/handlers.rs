@@ -99,9 +99,13 @@ pub async fn run_user_shell_command(
     timeout_ms: Option<u64>,
 ) {
     if crate::worker_policy::restricted() {
-        sess.send_event_raw(Event { id: sub_id, msg: EventMsg::Warning(WarningEvent {
-            message: "User shell commands are disabled by worker launch policy".to_string(),
-        }) }).await;
+        sess.send_event_raw(Event {
+            id: sub_id,
+            msg: EventMsg::Warning(WarningEvent {
+                message: "User shell commands are disabled by worker launch policy".to_string(),
+            }),
+        })
+        .await;
         return;
     }
     if let Some((turn_context, cancellation_token)) =

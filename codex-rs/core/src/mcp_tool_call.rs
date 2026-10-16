@@ -543,7 +543,8 @@ async fn handle_approved_mcp_tool_call(
                         call_id,
                         &rewritten_arguments,
                         request_meta,
-                    ).map_err(anyhow::Error::msg)?;
+                    )
+                    .map_err(anyhow::Error::msg)?;
                     let mcp_call_trace = sess
                         .services
                         .rollout_thread_trace

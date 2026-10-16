@@ -17,8 +17,11 @@ use pretty_assertions::assert_eq;
 #[test]
 fn worker_proxy_digest_binds_runtime_fields_that_ordinary_serde_skips() {
     let spec = NetworkProxySpec::from_config_and_constraints(
-        NetworkProxyConfig::default(), /*requirements*/ None, &PermissionProfile::workspace_write(),
-    ).unwrap();
+        NetworkProxyConfig::default(),
+        /*requirements*/ None,
+        &PermissionProfile::workspace_write(),
+    )
+    .unwrap();
     let original = spec.worker_policy_sha256().unwrap();
     let mut changed = spec.clone();
     changed.config.credential_broker_openai_host = Some("example.invalid".to_string());
@@ -27,9 +30,11 @@ fn worker_proxy_digest_binds_runtime_fields_that_ordinary_serde_skips() {
     changed.constraints.allowlist_expansion_enabled = Some(false);
     assert_ne!(original, changed.worker_policy_sha256().unwrap());
     let mut changed = spec;
-    changed.config.credential_broker_context = std::collections::HashMap::from([
-        ("EXAMPLE_DESTINATION".to_string(), "opaque-fixture".to_string()),
-    ]).into();
+    changed.config.credential_broker_context = std::collections::HashMap::from([(
+        "EXAMPLE_DESTINATION".to_string(),
+        "opaque-fixture".to_string(),
+    )])
+    .into();
     assert!(changed.worker_policy_sha256().is_err());
 }
 

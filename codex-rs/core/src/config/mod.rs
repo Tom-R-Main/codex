@@ -3174,7 +3174,10 @@ fn validate_multi_agent_v2_tool_namespace(namespace: Option<&str>) -> std::io::R
 }
 
 #[derive(Clone, Copy)]
-enum ConfigLoadSource { Ambient, SealedWorker }
+enum ConfigLoadSource {
+    Ambient,
+    SealedWorker,
+}
 
 impl Config {
     #[cfg(test)]
@@ -3202,8 +3205,15 @@ impl Config {
         codex_home: AbsolutePathBuf,
         config_layer_stack: ConfigLayerStack,
     ) -> std::io::Result<Self> {
-        Self::load_config_with_layer_stack_source(fs, cfg, overrides, codex_home,
-            config_layer_stack, ConfigLoadSource::Ambient).await
+        Self::load_config_with_layer_stack_source(
+            fs,
+            cfg,
+            overrides,
+            codex_home,
+            config_layer_stack,
+            ConfigLoadSource::Ambient,
+        )
+        .await
     }
 
     pub(crate) async fn load_sealed_worker_config(
@@ -3212,8 +3222,15 @@ impl Config {
         codex_home: AbsolutePathBuf,
         config_layer_stack: ConfigLayerStack,
     ) -> std::io::Result<Self> {
-        Self::load_config_with_layer_stack_source(LOCAL_FS.as_ref(), cfg, overrides, codex_home,
-            config_layer_stack, ConfigLoadSource::SealedWorker).await
+        Self::load_config_with_layer_stack_source(
+            LOCAL_FS.as_ref(),
+            cfg,
+            overrides,
+            codex_home,
+            config_layer_stack,
+            ConfigLoadSource::SealedWorker,
+        )
+        .await
     }
 
     async fn load_config_with_layer_stack_source(

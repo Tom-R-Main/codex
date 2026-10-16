@@ -34,8 +34,10 @@ struct EffectiveWorkerConfigV1 {
 /// environment variables here. Neither raw sections nor serialization errors are
 /// exposed in the attestation, logs or error messages.
 pub(crate) fn effective_config_sha256(config: &Config) -> Result<String, String> {
-    effective_config_projection(config).and_then(|projection| digest(&projection)
-        .map_err(|_| "worker effective configuration cannot be bound".to_string()))
+    effective_config_projection(config).and_then(|projection| {
+        digest(&projection)
+            .map_err(|_| "worker effective configuration cannot be bound".to_string())
+    })
 }
 
 pub(crate) fn effective_config_projection(config: &Config) -> Result<serde_json::Value, String> {
@@ -46,11 +48,16 @@ pub(crate) fn effective_config_projection(config: &Config) -> Result<serde_json:
     }
     let project = || -> Result<EffectiveWorkerConfigV1, serde_json::Error> {
         let shell = &config.permissions.shell_environment_policy;
-        let features = codex_features::FEATURES.iter().map(|spec| {
-            (spec.key, config.features.enabled(spec.id))
-        }).collect::<BTreeMap<_, _>>();
-        let network = config.permissions.network.as_ref()
-            .map(|network| network.worker_policy_sha256()).transpose()
+        let features = codex_features::FEATURES
+            .iter()
+            .map(|spec| (spec.key, config.features.enabled(spec.id)))
+            .collect::<BTreeMap<_, _>>();
+        let network = config
+            .permissions
+            .network
+            .as_ref()
+            .map(|network| network.worker_policy_sha256())
+            .transpose()
             .map_err(serde_json::Error::io)?;
         Ok(EffectiveWorkerConfigV1 {
             domain: "codex-worker-loaded-config",
@@ -138,7 +145,8 @@ pub(crate) fn effective_config_projection(config: &Config) -> Result<serde_json:
             }))?,
         })
     };
-    project().and_then(serde_json::to_value)
+    project()
+        .and_then(serde_json::to_value)
         .map_err(|_| "worker effective configuration cannot be bound".to_string())
 }
 

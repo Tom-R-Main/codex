@@ -64,8 +64,12 @@ pub(crate) async fn assert_restricted_preflight_serializes_turn_admission(
     use codex_protocol::user_input::UserInput;
     use std::time::Duration;
 
-    for exit in [PreparationExit::ValidationFailure, PreparationExit::Timeout,
-        PreparationExit::Dropped, PreparationExit::Canceled] {
+    for exit in [
+        PreparationExit::ValidationFailure,
+        PreparationExit::Timeout,
+        PreparationExit::Dropped,
+        PreparationExit::Canceled,
+    ] {
         let (session, context) = crate::session::tests::make_session_and_context().await;
         let session = Arc::new(session);
         let state = session.state.lock().await;
@@ -94,7 +98,11 @@ pub(crate) async fn assert_restricted_preflight_serializes_turn_admission(
                 assert!(prepare.await.is_err());
             }
             PreparationExit::Timeout => {
-                assert!(tokio::time::timeout(Duration::from_millis(1), prepare).await.is_err());
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(1), prepare)
+                        .await
+                        .is_err()
+                );
                 drop(state);
             }
             PreparationExit::Dropped => {
@@ -114,21 +122,54 @@ pub(crate) async fn assert_restricted_preflight_serializes_turn_admission(
         // A queued native task can register after every failure/cancel mode.
         // This task has no inference or effects; it only signals and awaits abort.
         let entered = Arc::new(tokio::sync::Notify::new());
-        tokio::time::timeout(Duration::from_secs(5), session.start_task(
-            Arc::new(context), Vec::new(), AdmissionProbeTask { entered: entered.clone() },
-        )).await.expect("preflight must release native task admission");
-        tokio::time::timeout(Duration::from_secs(5), entered.notified()).await.unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            session.start_task(
+                Arc::new(context),
+                Vec::new(),
+                AdmissionProbeTask {
+                    entered: entered.clone(),
+                },
+            ),
+        )
+        .await
+        .expect("preflight must release native task admission");
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .unwrap();
         let thread_id = session.thread_id.to_string();
-        crate::worker_policy::record_registry(thread_id.clone(), &session.worker_registry,
-            "worker-model", valid_config, vec![(
+        crate::worker_policy::record_registry(
+            thread_id.clone(),
+            &session.worker_registry,
+            "worker-model",
+            valid_config,
+            vec![(
                 codex_tools::ToolName::namespaced("mcp__sift_worker", "execute"),
                 Some("sift-worker".to_string()),
-            )]).unwrap();
+            )],
+        )
+        .unwrap();
         // Turn-first: refusal must occur before invalidating the live registry.
-        assert!(session.prepare_restricted_worker_registry(&CancellationToken::new()).await.is_err());
-        assert!(crate::worker_policy::executor_request_meta(&thread_id,
-            &session.worker_registry, "live-turn", "live-call", &None, None).is_ok());
-        session.abort_all_tasks(codex_protocol::protocol::TurnAbortReason::Interrupted).await;
+        assert!(
+            session
+                .prepare_restricted_worker_registry(&CancellationToken::new())
+                .await
+                .is_err()
+        );
+        assert!(
+            crate::worker_policy::executor_request_meta(
+                &thread_id,
+                &session.worker_registry,
+                "live-turn",
+                "live-call",
+                &None,
+                None
+            )
+            .is_ok()
+        );
+        session
+            .abort_all_tasks(codex_protocol::protocol::TurnAbortReason::Interrupted)
+            .await;
         assert!(session.turn_admission.try_lock().is_ok());
     }
 }
@@ -139,14 +180,34 @@ async fn ordinary_native_task_queues_behind_admission_and_registers_after_releas
     let session = Arc::new(session);
     let entered = Arc::new(tokio::sync::Notify::new());
     let admission = session.turn_admission.lock().await;
-    let mut start = Box::pin(session.start_task(Arc::new(context), Vec::new(),
-        AdmissionProbeTask { entered: entered.clone() }));
+    let mut start = Box::pin(session.start_task(
+        Arc::new(context),
+        Vec::new(),
+        AdmissionProbeTask {
+            entered: entered.clone(),
+        },
+    ));
     assert!(futures::poll!(start.as_mut()).is_pending());
     assert!(session.active_turn.lock().await.is_none());
     drop(admission);
-    tokio::time::timeout(std::time::Duration::from_secs(5), start).await.unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified()).await.unwrap();
-    assert!(session.active_turn.lock().await.as_ref().unwrap().task.is_some());
-    session.abort_all_tasks(codex_protocol::protocol::TurnAbortReason::Interrupted).await;
+    tokio::time::timeout(std::time::Duration::from_secs(5), start)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified())
+        .await
+        .unwrap();
+    assert!(
+        session
+            .active_turn
+            .lock()
+            .await
+            .as_ref()
+            .unwrap()
+            .task
+            .is_some()
+    );
+    session
+        .abort_all_tasks(codex_protocol::protocol::TurnAbortReason::Interrupted)
+        .await;
     assert!(session.turn_admission.try_lock().is_ok());
 }
