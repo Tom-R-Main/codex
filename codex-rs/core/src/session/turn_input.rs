@@ -208,6 +208,13 @@ pub(super) async fn handle(
     mode: TurnInputMode,
     submission_id: String,
 ) -> CodexResult<TurnInputSubmission> {
+    if crate::worker_policy::restricted() {
+        let safe = matches!(&request.input, SubmittedTurnInput::UserInput { content, .. }
+            if crate::worker_policy::text_input_only(content));
+        if !safe || !request.additional_context.is_empty() {
+            return Err(CodexErr::InvalidRequest("restricted workers accept text input only".to_string()));
+        }
+    }
     match mode {
         TurnInputMode::StartOrSteer => start_or_steer(session, request, submission_id).await,
         TurnInputMode::StartIfIdle => {

@@ -97,6 +97,7 @@ mod app_server_tracing;
 mod attestation;
 mod auth_mode;
 mod bespoke_event_handling;
+mod sift_command_scope;
 mod code_mode_host;
 mod codex_home_metrics;
 mod command_exec;
@@ -498,6 +499,7 @@ pub async fn run_main_with_transport_options(
     auth: AppServerWebsocketAuthSettings,
     runtime_options: AppServerRuntimeOptions,
 ) -> IoResult<AppServerExit> {
+    codex_core::initialize_worker_policy()?;
     #[cfg(target_os = "windows")]
     let _registered_core = codex_windows_sandbox::registered_core_requested();
     let loader_overrides = loader_overrides_with_test_user_config_file(
@@ -571,6 +573,7 @@ pub async fn run_main_with_transport_options(
             })?
         }
     };
+    codex_core::validate_worker_config(&config)?;
     config.auth_config().validate()?;
     let auth_manager =
         AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false)

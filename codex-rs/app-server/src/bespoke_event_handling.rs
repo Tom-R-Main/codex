@@ -673,6 +673,8 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .into_iter()
                 .map(CommandExecutionApprovalDecision::from)
                 .collect::<Vec<_>>();
+            // Capture typed execution identity before display formatting or presentation redaction.
+            let sift_command_scope = crate::sift_command_scope::from_approval(&ev);
             let ExecApprovalRequestEvent {
                 model_context,
                 kind,
@@ -795,6 +797,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 command,
                 cwd,
                 command_actions,
+                sift_command_scope,
                 additional_permissions,
                 proposed_execpolicy_amendment: proposed_execpolicy_amendment_v2,
                 proposed_network_policy_amendments: proposed_network_policy_amendments_v2,

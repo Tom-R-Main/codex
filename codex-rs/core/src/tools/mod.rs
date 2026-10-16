@@ -83,6 +83,7 @@ pub(crate) fn requested_tool_mode(turn_context: &TurnContext, model_info: &Model
 }
 
 pub(crate) fn effective_tool_mode(turn_context: &TurnContext, model_info: &ModelInfo) -> ToolMode {
+    if crate::worker_policy::restricted() { return ToolMode::Direct; }
     let requested_tool_mode = requested_tool_mode(turn_context, model_info);
     if !turn_context.code_mode_available
         && requested_tool_mode == ToolMode::CodeMode

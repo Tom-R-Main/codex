@@ -773,6 +773,7 @@ impl Session {
         git_enrichment_policy: GitEnrichmentPolicy,
         windows_sandbox_proxy_settings_mode: codex_sandboxing::WindowsSandboxProxySettingsMode,
     ) -> anyhow::Result<Arc<Self>> {
+        crate::worker_policy::validate_worker_config(&config)?;
         debug!(
             "Configuring session: model={}; provider={:?}",
             session_configuration
@@ -1389,7 +1390,7 @@ impl Session {
                 );
             let use_executor_shell_snapshots =
                 prefer_executor_shell_snapshots && !credential_broker_active;
-            let shell_snapshot = if config.features.enabled(Feature::ShellSnapshot)
+            let shell_snapshot = if !crate::worker_policy::restricted() && config.features.enabled(Feature::ShellSnapshot)
                 && (!use_executor_shell_snapshots || credential_broker_available)
             {
                 let snapshot_credential_broker = credential_broker_available.then(|| {

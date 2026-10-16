@@ -262,6 +262,7 @@ pub(crate) mod turn;
 pub(crate) mod turn_context;
 mod turn_input;
 mod turn_suspension;
+mod worker_policy_preflight;
 mod world_state;
 use self::code_mode_warning::unsupported_code_mode_warning;
 pub(crate) use self::environment::ThreadEnvironmentDefaults;
@@ -578,6 +579,8 @@ impl Session {
             git_enrichment_policy,
             windows_sandbox_proxy_settings_mode,
         } = args;
+        crate::worker_policy::validate_worker_config(&config)
+            .map_err(|error| codex_protocol::error::CodexErrorDetails::InvalidRequest(error.to_string()))?;
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
 
@@ -2814,6 +2817,7 @@ impl Session {
         additional_permissions: Option<AdditionalPermissionProfile>,
         available_decisions: Option<Vec<ReviewDecision>>,
         plugin_attribution_override: Option<PluginCommandAttribution>,
+        sift_command_scope: Option<codex_protocol::approvals::SiftNativeCommandScope>,
     ) -> ReviewDecision {
         let _elicitation = self.services.elicitations.register();
         //  command-level approvals use `call_id`.
@@ -2866,6 +2870,7 @@ impl Session {
             .map(PluginCommandAttribution::serialized_fields)
             .unzip();
         let event = EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
+            sift_command_scope,
             model_context: Some(model_context),
             kind,
             call_id,
@@ -5073,6 +5078,7 @@ async fn build_hooks_config(
     environment: Option<&TurnEnvironment>,
     disabled_plugin_ids: &[String],
 ) -> HooksConfig {
+    if crate::worker_policy::restricted() { return HooksConfig::default(); }
     let (hook_shell_program, hook_shell_argv) = environment
         .and_then(|environment| environment.shell.as_ref())
         .map(|shell| {

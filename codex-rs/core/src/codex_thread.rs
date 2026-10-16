@@ -1014,6 +1014,22 @@ impl CodexThread {
             .await
     }
 
+    /// Prepare an actual executable registry without issuing a model request.
+    /// The bounded request does not grant permission to execute any tool.
+    pub async fn prepare_worker_policy(&self, challenge: &str) -> CodexResult<serde_json::Value> {
+        let thread = self.session.thread_id.to_string();
+        if !crate::worker_policy::valid_read_request(&thread, challenge) {
+            return Err(CodexErr::InvalidRequest("invalid worker attestation challenge".to_owned()));
+        }
+        let cancellation = CancellationToken::new();
+        let _cancel_on_drop = cancellation.clone().drop_guard();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            self.session.prepare_restricted_worker_registry(&cancellation),
+        ).await.map_err(|_| CodexErr::InvalidRequest("worker preparation timed out".to_owned()))??;
+        Ok(crate::worker_policy::read_worker_policy(&thread, challenge))
+    }
+
     pub async fn call_mcp_tool(
         &self,
         server: &str,
@@ -1021,6 +1037,9 @@ impl CodexThread {
         arguments: Option<serde_json::Value>,
         meta: Option<serde_json::Value>,
     ) -> anyhow::Result<CallToolResult> {
+        if crate::worker_policy::restricted() {
+            anyhow::bail!("direct MCP calls are disabled by worker launch policy");
+        }
         self.session.refresh_mcp_if_dirty().await;
         self.session
             .services

@@ -65,6 +65,7 @@ async fn command_approval_holds_an_elicitation_until_response() {
                     /*additional_permissions*/ None,
                     /*available_decisions*/ None,
                     /*plugin_attribution_override*/ Some(plugin_attribution),
+                    /*sift_command_scope*/ None,
                 )
                 .await
         }

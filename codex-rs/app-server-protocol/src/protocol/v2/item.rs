@@ -1538,6 +1538,18 @@ v2_enum_from_core! {
     }
 }
 
+/// Exact native execution vector supplied by the provider, before command presentation.
+/// Consumers must bind this to the thread incarnation and environment, and persist only digests.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export_to = "v2/")]
+pub struct SiftCommandScope {
+    pub version: u32,
+    pub program: String,
+    pub argv: Vec<String>,
+    pub cwd: String,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS, ExperimentalApi)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
@@ -1581,6 +1593,12 @@ pub struct CommandExecutionRequestApprovalParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional = nullable)]
     pub cwd: Option<LegacyAppPathString>,
+    /// Provider-specific v1 execution identity. Never reconstructed from `command` or command actions.
+    /// Absent for pre-rewrite shell commands, network and terminal-input approvals,
+    /// and when native execve identity is unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub sift_command_scope: Option<SiftCommandScope>,
     /// Best-effort parsed command actions for friendly display.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional = nullable)]

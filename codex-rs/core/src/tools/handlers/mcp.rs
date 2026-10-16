@@ -184,6 +184,9 @@ impl McpHandler {
                 self.tool_info.tool.name.as_ref(),
             )
             .await;
+        if crate::worker_policy::restricted() && prepared_mcp_call.is_none() {
+            return Err(FunctionCallError::RespondToModel("worker MCP binding refused".to_string()));
+        }
         // Use the executed call's binding; a later catalog refresh must not change eligibility.
         let result_metadata_capture_allowed = invocation
             .session

@@ -76,6 +76,8 @@ mod agent_communication;
 mod agent_message_board;
 pub use agent_message_board::install_agent_message_board;
 mod attestation;
+mod worker_policy;
+pub use worker_policy::{initialize_worker_policy, read_worker_policy, worker_rpc_allowed, worker_request_allowed, worker_is_restricted, validate_worker_config};
 mod codex_delegate;
 mod command_canonicalization;
 pub mod config;

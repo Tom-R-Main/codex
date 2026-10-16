@@ -307,6 +307,7 @@ async fn command_execution_request_approval_strips_additional_permissions_withou
                     command: Some("cat file".to_string()),
                     cwd: Some(absolute_path("/tmp").into()),
                     command_actions: None,
+                    sift_command_scope: None,
                     additional_permissions: Some(
                         codex_app_server_protocol::AdditionalPermissionProfile {
                             network: None,
@@ -374,6 +375,7 @@ async fn command_execution_request_approval_keeps_additional_permissions_with_ca
                     command: Some("cat file".to_string()),
                     cwd: Some(absolute_path("/tmp").into()),
                     command_actions: None,
+                    sift_command_scope: None,
                     additional_permissions: Some(
                         codex_app_server_protocol::AdditionalPermissionProfile {
                             network: None,

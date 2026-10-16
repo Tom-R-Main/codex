@@ -972,6 +972,10 @@ impl MessageProcessor {
             return Err(invalid_request("Not initialized"));
         }
 
+        if !codex_core::worker_request_allowed(&codex_request) {
+            return Err(invalid_request("RPC disabled by worker launch policy"));
+        }
+
         if let Some(reason) = codex_request.experimental_reason()
             && !session.experimental_api_enabled()
         {
@@ -1126,6 +1130,8 @@ impl MessageProcessor {
                 })
                 .await;
             }
+            ClientRequest::WorkerPolicyRead { params, .. } => self.thread_processor
+                .worker_policy_read(params).await,
             ClientRequest::ServerDiagnostics { .. } => Ok(Some(read_server_diagnostics().into())),
             ClientRequest::ConfigRead { params, .. } => self
                 .config_processor

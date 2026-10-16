@@ -83,3 +83,6 @@ pub use windows_sandbox::*;
 
 #[cfg(test)]
 mod tests;
+
+mod worker_policy;
+pub use worker_policy::*;

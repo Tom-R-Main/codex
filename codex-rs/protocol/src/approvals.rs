@@ -266,8 +266,20 @@ pub enum ExecApprovalKind {
     WriteStdin,
 }
 
+/// Process-local native execve identity. Never serialized into rollout history.
+#[derive(Debug, Clone)]
+pub struct SiftNativeCommandScope {
+    pub program: AbsolutePathBuf,
+    pub argv: Vec<String>,
+    pub cwd: AbsolutePathBuf,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ExecApprovalRequestEvent {
+    #[serde(skip)]
+    #[schemars(skip)]
+    #[ts(skip)]
+    pub sift_command_scope: Option<SiftNativeCommandScope>,
     #[serde(skip)]
     #[schemars(skip)]
     #[ts(skip)]

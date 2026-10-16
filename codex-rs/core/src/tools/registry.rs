@@ -338,7 +338,9 @@ impl ToolRegistry {
         exposure: ToolExposure,
     ) {
         let tool_name = runtime.tool_name().with_default_namespace();
-        if !self.tool_policy.allows(&tool_name) {
+        if !self.tool_policy.allows(&tool_name)
+            || !crate::worker_policy::allows_tool(&tool_name, runtime.mcp_server_name())
+        {
             return;
         }
         match self.tools.entry(tool_name) {
@@ -354,7 +356,9 @@ impl ToolRegistry {
 
     pub(crate) fn prepend_trusted(&mut self, runtime: Arc<dyn CoreToolRuntime>) {
         let tool_name = runtime.tool_name().with_default_namespace();
-        if !self.tool_policy.allows(&tool_name) {
+        if !self.tool_policy.allows(&tool_name)
+            || !crate::worker_policy::allows_tool(&tool_name, runtime.mcp_server_name())
+        {
             return;
         }
         if self.tools.contains_key(&tool_name) {
@@ -378,7 +382,9 @@ impl ToolRegistry {
         exposure: ToolExposure,
     ) -> bool {
         let tool_name = runtime.tool_name().with_default_namespace();
-        if !self.tool_policy.allows(&tool_name) {
+        if !self.tool_policy.allows(&tool_name)
+            || !crate::worker_policy::allows_tool(&tool_name, runtime.mcp_server_name())
+        {
             return false;
         }
         if tool_name.is_default_namespace()
@@ -480,6 +486,7 @@ impl ToolRegistry {
     pub(crate) fn tool(&self, name: &ToolName) -> Option<Arc<dyn CoreToolRuntime>> {
         self.tools
             .get(&name.clone().with_default_namespace())
+            .filter(|tool| crate::worker_policy::allows_tool(name, tool.runtime.mcp_server_name()))
             .map(|tool| Arc::clone(&tool.runtime))
     }
 

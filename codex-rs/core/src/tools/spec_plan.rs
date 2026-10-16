@@ -177,13 +177,16 @@ pub(crate) fn build_tool_router(
         standalone_web_search_tool.as_slice(),
     );
 
-    finalize_tool_router(
+    let router = finalize_tool_router(
         turn_context,
         model_info,
         registry,
         hosted_specs,
         &session.services.tool_search_handler_cache,
-    )
+    )?;
+    router.record_worker_registry(session.thread_id.to_string(), &model_info.slug)
+        .map_err(CodexErrorDetails::InvalidRequest)?;
+    Ok(router)
 }
 
 fn apply_mcp_tool_exposure_policy(
@@ -352,7 +355,7 @@ pub(crate) fn finalize_tool_router(
     mut hosted_specs: Vec<ToolSpec>,
     tool_search_handler_cache: &ToolSearchHandlerCache,
 ) -> CodexResult<ToolRouter> {
-    hosted_specs.retain(|spec| registry.tool_policy.allows(&ToolName::plain(spec.name())));
+    hosted_specs.retain(|spec| !crate::worker_policy::restricted() && registry.tool_policy.allows(&ToolName::plain(spec.name())));
     apply_direct_model_only_namespace_overrides(turn_context, &mut registry);
     let tool_mode = effective_tool_mode(turn_context, model_info);
     let code_mode_enabled = matches!(tool_mode, ToolMode::CodeMode | ToolMode::CodeModeOnly);
